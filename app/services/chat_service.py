@@ -1,43 +1,65 @@
-from app.agent import create_agent
+"""
+services/chat_service.py — Chat Service
 
-from app.schemas.agent import AgentResponse
-# from app.tools.course_tools import search_course
+RESPONSIBILITY: Bridge between the FastAPI endpoint and the PydanticAI agent.
+
+CHANGE FROM PREVIOUS VERSION:
+    The agent now returns `str` instead of `AgentResponse`.
+
+    Previous (broken):
+        result.output → AgentResponse (via output_type= hidden final_result tool)
+        Problem: caused Groq parallel-tool-call interference — the model called
+        `final_result` in the same turn as a real tool, terminating the agent
+        loop before the tool result could be fed back to the model.
+
+    Current (correct):
+        result.output → str (PydanticAI default)
+        The agent loop terminates only when the model emits plain text with
+        no tool calls. Tool results are always fed back correctly first.
+
+    ChatService.chat() now returns result.output directly (it's already a str).
+    The response dict shape is unchanged: {"response": str}
+"""
+
+import logging
+
+from app.agent import create_agent
 from app.dependencies import AgentDependencies
 
-from app.tools.x import get_course_by_name
+logger = logging.getLogger(__name__)
+
+
 class ChatService:
-    def __init__(self):
+    """
+    Thin orchestrator between FastAPI and the PydanticAI agent.
+
+    Instantiated once in lifespan() and stored on app.state.
+    All requests share the same agent instance.
+    """
+
+    def __init__(self) -> None:
         self.agent = create_agent()
-        self.agent.tool(get_course_by_name, sequential=True)
-        print("Tool Registered")
+        logger.info("ChatService initialized.")
 
+    def chat(self, question: str, deps: AgentDependencies) -> dict:
+        """
+        Run the agent and return the final response as a dict.
 
-    def chat(self, question: str, deps: AgentDependencies):
-        result = self.agent.run_sync(
-            question,
-            deps=deps
-        )
+        The agent output is `str` — the model's natural-language response
+        produced AFTER all tool calls have completed and results fed back.
 
-        print(result)
-        print(result.all_messages())
+        Args:
+            question: The user's raw message.
+            deps:     AgentDependencies from app.state (repositories + settings).
 
-        if isinstance(result.output, AgentResponse):
-            return {"response": result.output.response}
+        Returns:
+            {"response": str} — ready for FastAPI ChatResponse serialisation.
+        """
+        logger.info(f"ChatService.chat: question='{question[:80]}'")
 
-        return {"response": str(result.output)}
-    
-# في PydanticAI فيه نوعين من الـ Tools
-# النوع الأول: Tool بدون Context
+        result = self.agent.run_sync(question, deps=deps)
 
-# لو الـ Tool مش محتاجة Context، عرفها كده:
+        logger.debug(f"ChatService.chat: messages={result.all_messages()}")
 
-# def search_course(query: str):
-#     ...
-
-# وسجلها:
-
-# agent.tool_plain(search_course)
-
-# وليس:
-
-# agent.tool(search_course)
+        # result.output is str — return it directly.
+        return {"response": result.output}

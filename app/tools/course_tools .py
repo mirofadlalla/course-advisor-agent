@@ -7,7 +7,7 @@ def search_course(
     name: str,
 ) -> CourseSearchResult:
 
-    course = repo.find_course_by_name(name)
+    course = repo.find_best_course(name)
 
     if course is None:
         return CourseSearchResult(

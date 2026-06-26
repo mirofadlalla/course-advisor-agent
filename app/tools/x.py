@@ -32,14 +32,23 @@ repo = CourseRepository()
 # ctx.deps
 # وده غلط.
 
-def search_course(
+def get_course_by_name(
     ctx: RunContext[AgentDependencies],
-    name: str,
+    course_name: str,
 
 ) -> CourseSearchResult:
+    """
+    Retrieve detailed information about a Kayfa course by its exact or partial name.
 
+    Use this tool whenever the user asks about:
+    - a specific course
+    - course details
+    - duration
+    - level
+    - course link
+    """
     repo = ctx.deps.course_repository
-    course = repo.find_course_by_name(name)
+    course = repo.find_best_course(course_name)
 
     if course is None:
         return CourseSearchResult(

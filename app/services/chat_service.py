@@ -2,24 +2,29 @@ from app.agent import create_agent
 
 from app.schemas.agent import AgentResponse
 # from app.tools.course_tools import search_course
+from app.dependencies import AgentDependencies
 
-
-from app.tools.x import search_course
+from app.tools.x import get_course_by_name
 class ChatService:
     def __init__(self):
         self.agent = create_agent()
-        self.agent.tool(search_course)
+        self.agent.tool(get_course_by_name, sequential=True)
+        print("Tool Registered")
 
 
-    def chat(self, question: str):
+    def chat(self, question: str, deps: AgentDependencies):
         result = self.agent.run_sync(
-            question
+            question,
+            deps=deps
         )
-        # return AgentResponse(
-        #     response=result.output
-        # )
 
-        return result.output
+        print(result)
+        print(result.all_messages())
+
+        if isinstance(result.output, AgentResponse):
+            return {"response": result.output.response}
+
+        return {"response": str(result.output)}
     
 # في PydanticAI فيه نوعين من الـ Tools
 # النوع الأول: Tool بدون Context

@@ -5,6 +5,7 @@ from app.config import settings\
 from app.prompts import SYSTEM_PROMPT
 
 from app.schemas.agent import AgentResponse
+from app.dependencies import AgentDependencies
 # agent = Agent(
 #     model = settings.model_name,
 #     system_prompt = """
@@ -31,6 +32,6 @@ def create_agent() -> Agent:
     return Agent(
         model=settings.model_name,
         system_prompt=SYSTEM_PROMPT,
-        output_type= AgentResponse
-
+        output_type=AgentResponse,
+        deps_type=AgentDependencies,
     )

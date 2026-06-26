@@ -5,6 +5,7 @@ from typing import Optional
 from app.schemas.course import Course
 from app.schemas.roadmap import Roadmap
 
+from rapidfuzz import process
 
 class CourseRepository:
 
@@ -27,23 +28,89 @@ class CourseRepository:
                 for course in data
             ]
 
-    
-    def find_course_by_name(
-        self,
-        name: str
-    ) -> Optional[Course]:
+    # Exact Match
+    def find_by_exact_name(
+    self,
+    query: str,
+    ):
+        query = query.strip().lower()
 
-        name = name.lower().strip()
+        for course in self.courses:
+            if course.name.lower() == query:
+                return course
+
+        return None
+
+    # Contains Match
+    def find_by_keyword(
+    self,
+    query: str,
+    ):
+        query = query.strip().lower()
 
         for course in self.courses:
 
             course_name = course.name.lower()
 
-            if name in course_name:
+            if query in course_name:
+                return course
+
+            if course_name in query:
+                return course
+
+        return None 
+    
+    # Fuzzy Match
+    def find_by_fuzzy(
+    self,
+    query: str,
+    ):
+        names = [
+            course.name
+            for course in self.courses
+        ]
+
+        result = process.extractOne(
+            query,
+            names,
+        )
+
+        if result is None:
+            return None
+
+        best_name, score, _ = result
+
+        if score < 80:
+            return None
+
+        for course in self.courses:
+            if course.name == best_name:
                 return course
 
         return None
     
+    # Find Best Course
+    def find_best_course(
+    self,
+    query: str,
+    ):
+
+        course = self.find_by_exact_name(query)
+
+        if course:
+            return course
+
+        course = self.find_by_keyword(query)
+
+        if course:
+            return course
+
+        course = self.find_by_fuzzy(query)
+
+        if course:
+            return course
+
+        return None
 
 # repo = CourseRepository()
 

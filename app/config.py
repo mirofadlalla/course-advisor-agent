@@ -4,6 +4,10 @@ class Settings(BaseSettings):
     app_name: str = "Course Advisor Agent"
     debug: bool = True
 
+    vector_store = "local"
+
+    embedding_model: str = "BAAI/bge-m3"
+
     groq_api_key: str
     model_name: str = "groq:llama-3.3-70b-versatile"
 

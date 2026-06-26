@@ -40,6 +40,21 @@ class Settings(BaseSettings):
     # is unavailable (e.g., chromadb not installed on HuggingFace Spaces).
     vector_store_backend: str = "simple"
 
+    # ─── Chroma Settings ──────────────────────────────────────────────────────
+    # Only used when vector_store_backend="chroma".
+    # chroma_host: set to a hostname for client-server mode (e.g. "localhost").
+    #              Leave empty ("") for in-process PersistentClient mode.
+    chroma_host: str = ""
+    chroma_port: int = 8000
+    chroma_collection: str = "kayfa_knowledge"
+    chroma_persist_dir: str = "./storage/chroma"
+
+    # ─── Qdrant Settings ──────────────────────────────────────────────────────
+    # Only used when vector_store_backend="qdrant".
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "kayfa_knowledge"
+
     # ─── Storage ──────────────────────────────────────────────────────────────
     # Where the persisted index lives.
     # Local:               ./storage/index

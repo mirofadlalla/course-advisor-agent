@@ -36,6 +36,11 @@ WHY ASYNC build_async()?
     VectorStoreIndex construction with embeddings is CPU-heavy but can be
     offloaded to a thread pool for future scalability.
     Establishing the async pattern now costs nothing and prevents refactoring later.
+
+NODE STORAGE:
+    build_async() stores the chunked_nodes on self._last_chunked_nodes so that
+    IngestionPipeline can hand them to BM25Retriever without re-running the pipeline.
+    On the load path, nodes come from the docstore — this field stays None.
 """
 
 import asyncio
@@ -43,6 +48,7 @@ import logging
 
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.core.embeddings import BaseEmbedding
+from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 
 from app.ingestion.loaders import BaseDocumentLoader
@@ -65,6 +71,10 @@ class IndexBuilder:
         chunker:      Knows HOW to size-normalize nodes
         embed_model:  Knows HOW to embed text into vectors
         vector_store: Knows WHERE to store vectors (Simple, Chroma, Qdrant)
+
+    After build_async() completes, self._last_chunked_nodes holds the chunked
+    nodes so the caller can pass them to BM25Retriever without re-running
+    the pipeline.
     """
 
     def __init__(
@@ -80,6 +90,8 @@ class IndexBuilder:
         self._chunker = chunker
         self._embed_model = embed_model
         self._vector_store = vector_store
+        # Populated by build_async(); None until then.
+        self._last_chunked_nodes: list[BaseNode] | None = None
 
     async def build_async(self) -> VectorStoreIndex:
         """
@@ -90,6 +102,8 @@ class IndexBuilder:
         Step 3: Chunk — sync, CPU (size normalization)
         Step 4: Index — sync, CPU+GPU (embedding computation)
                         this is the most expensive step
+
+        Stores chunked nodes in self._last_chunked_nodes for BM25 access.
 
         Returns:
             VectorStoreIndex: Ready-to-query index with all documents embedded.
@@ -116,6 +130,9 @@ class IndexBuilder:
         chunked_nodes = await loop.run_in_executor(None, self._chunker.chunk, nodes)
         logger.info(f"IndexBuilder: Produced {len(chunked_nodes)} chunks.")
 
+        # Store for BM25 access via IngestionPipeline
+        self._last_chunked_nodes = chunked_nodes
+
         # Step 4: Build VectorStoreIndex (embedding computation)
         # This calls embed_model.get_text_embedding() for each chunk.
         # With BAAI/bge-m3 and ~500 chunks, expect ~2-5 minutes on CPU.
@@ -139,10 +156,18 @@ class IndexBuilder:
         logger.info("IndexBuilder: VectorStoreIndex built successfully.")
         return index
 
-    def get_last_nodes(self) -> list:
+    def get_last_nodes(self) -> list[BaseNode]:
         """
-        Returns the last set of chunked nodes for BM25 retriever initialization.
-        Call this after build_async() to get nodes for BM25Retriever.
+        Returns the chunked nodes produced during the last build_async() call.
+
+        Used by IngestionPipeline to hand nodes to BM25Retriever.
+        Returns [] if called before build_async() — should never happen in
+        normal flow since IngestionPipeline calls this only after building.
         """
-        # Stored during build for BM25 access
-        return getattr(self, "_last_chunked_nodes", [])
+        if self._last_chunked_nodes is None:
+            logger.warning(
+                "IndexBuilder.get_last_nodes() called before build_async(). "
+                "Returning []. This is only expected during testing."
+            )
+            return []
+        return self._last_chunked_nodes

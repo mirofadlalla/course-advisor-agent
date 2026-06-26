@@ -20,46 +20,42 @@ INSTALLATION:
 
 CONFIGURATION (via Settings / .env):
     VECTOR_STORE_BACKEND=chroma
-    CHROMA_HOST=localhost       # for client-server mode
+    CHROMA_HOST=localhost            # leave empty for in-process mode
     CHROMA_PORT=8000
     CHROMA_COLLECTION=kayfa_knowledge
+    CHROMA_PERSIST_DIR=./storage/chroma
 
 NOTE: If chromadb is not installed, VectorStoreFactory catches the ImportError
 and falls back to SimpleVectorStoreAdapter. No crash, just a warning log.
 """
 
 import logging
-from dataclasses import dataclass, field
 
 from llama_index.core import StorageContext
 
+from app.config import Settings
 from app.vectorstores.base import BaseVectorStore
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ChromaSettings:
-    """Configuration for Chroma connection."""
-    collection_name: str = "kayfa_knowledge"
-    # None = in-process ephemeral (dev). Set host for client-server mode.
-    host: str | None = None
-    port: int = 8000
-    persist_directory: str = "./storage/chroma"
 
 
 class ChromaVectorStoreAdapter(BaseVectorStore):
     """
     Adapter for ChromaDB via LlamaIndex.
 
+    Receives Settings (DI) — all configuration comes from the environment.
+    No hardcoded paths, hosts, or collection names.
+
     Supports two modes:
     1. In-process (PersistentClient): Chroma runs in the same Python process.
-       Data is persisted to disk at persist_directory. Simple setup.
+       Data is persisted to disk at settings.chroma_persist_dir. Simple setup.
+       Set by leaving settings.chroma_host empty ("").
     2. Client-server (HttpClient): Connect to a running Chroma server.
        Required for multi-process deployments.
+       Set settings.chroma_host="localhost" (or any hostname).
     """
 
-    def __init__(self, chroma_settings: ChromaSettings | None = None) -> None:
+    def __init__(self, settings: Settings) -> None:
         # Defer import — chromadb may not be installed
         try:
             import chromadb
@@ -70,23 +66,33 @@ class ChromaVectorStoreAdapter(BaseVectorStore):
                 "Install with: pip install chromadb llama-index-vector-stores-chroma"
             ) from e
 
-        cfg = chroma_settings or ChromaSettings()
-
-        if cfg.host:
-            logger.info(f"ChromaVectorStoreAdapter: Connecting to Chroma at {cfg.host}:{cfg.port}")
-            client = chromadb.HttpClient(host=cfg.host, port=cfg.port)
+        if settings.chroma_host:
+            logger.info(
+                f"ChromaVectorStoreAdapter: Connecting to Chroma at "
+                f"{settings.chroma_host}:{settings.chroma_port}"
+            )
+            client = chromadb.HttpClient(
+                host=settings.chroma_host,
+                port=settings.chroma_port,
+            )
         else:
-            logger.info(f"ChromaVectorStoreAdapter: Using PersistentClient at {cfg.persist_directory}")
-            client = chromadb.PersistentClient(path=cfg.persist_directory)
+            logger.info(
+                f"ChromaVectorStoreAdapter: Using PersistentClient at "
+                f"'{settings.chroma_persist_dir}'"
+            )
+            client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
 
         collection = client.get_or_create_collection(
-            name=cfg.collection_name,
+            name=settings.chroma_collection,
             # cosine similarity is standard for text embeddings
             metadata={"hnsw:space": "cosine"},
         )
 
         self._store = ChromaVectorStore(chroma_collection=collection)
-        logger.info(f"ChromaVectorStoreAdapter: Ready. Collection='{cfg.collection_name}'")
+        logger.info(
+            f"ChromaVectorStoreAdapter: Ready. "
+            f"Collection='{settings.chroma_collection}'"
+        )
 
     def get_llama_vector_store(self):
         return self._store

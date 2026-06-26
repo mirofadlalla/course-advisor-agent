@@ -8,7 +8,7 @@ from app.tools.x import search_course
 class ChatService:
     def __init__(self):
         self.agent = create_agent()
-        self.agent.tool_plain(search_course)
+        self.agent.tool(search_course)
 
 
     def chat(self, question: str):

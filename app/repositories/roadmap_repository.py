@@ -6,41 +6,39 @@ from app.schemas.course import Course
 from app.schemas.roadmap import Roadmap
 
 
-class CourseRepository:
+class RoadmapRepository:
 
     def __init__(self):
 
-        self.courses = self._load_courses()
+        self.roadmaps = self._load_roadmaps()
 
 
-    def _load_courses(self):
+    def _load_roadmaps(self):
 
-        path = Path("data/json/kayfa_courses.json")
+        path = Path("data/json/kayfa_roadmaps.json")
 
         with open(path, encoding="utf-8") as f:
 
             data = json.load(f)
 
-            # Convert Into List Of Objects Instead of List Of Dicts
             return [
-                Course.model_validate(course)
-                for course in data
+                Roadmap.model_validate(roadmap)
+                for roadmap in data
             ]
-
     
-    def find_course_by_name(
+    def find_roadmap_by_name(
         self,
         name: str
-    ) -> Optional[Course]:
+    ) -> Optional[Roadmap]:
 
         name = name.lower().strip()
 
-        for course in self.courses:
+        for roadmap in self.roadmaps:
 
-            course_name = course.name.lower()
+            roadmap_name = roadmap.name.lower()
 
-            if name in course_name:
-                return course
+            if name in roadmap_name:
+                return roadmap
 
         return None
     

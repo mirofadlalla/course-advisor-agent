@@ -42,3 +42,11 @@ from app.schemas.api import ChatRequest, ChatResponse
 @app.post('/chat', response_model=ChatResponse)
 def chat(chat_request: ChatRequest):
     return course_service.chat(chat_request.message)
+
+
+# from app.repositories.course_repository import CourseRepository
+
+# course_repo = CourseRepository()
+# @app.get('/courses/{course_name}')
+# def get_course(course_name: str):
+#     return course_repo.find_course_by_name(course_name)

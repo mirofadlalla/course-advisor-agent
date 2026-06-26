@@ -2,7 +2,7 @@
 vectorstores/vector_store_factory.py — Vector Store Factory with Fallback
 
 RESPONSIBILITY: Create the appropriate vector store adapter based on Settings.
-Implements the automatic fallback to SimpleVectorStore when external DBs
+Implements automatic fallback to SimpleVectorStore when external DBs
 are unavailable (key for HuggingFace Spaces deployment).
 
 THE FALLBACK ARCHITECTURE:
@@ -14,9 +14,6 @@ THE FALLBACK ARCHITECTURE:
     logs a warning, and returns SimpleVectorStoreAdapter.
     The app starts successfully. The user gets working answers.
     You fix the issue without emergency hotfixes.
-
-    Production systems MUST degrade gracefully. A feature with 95% uptime
-    is better than a crash with 0% uptime.
 
 FALLBACK DECISION TREE:
     ┌─────────────────────────────────────────────┐
@@ -38,10 +35,10 @@ FALLBACK DECISION TREE:
                     SimpleVectorStoreAdapter
                     (with warning log)
 
-WHY NOT A CONFIG FLAG "use_fallback=True"?
-    The fallback should be AUTOMATIC. Requiring the user to set a flag means
-    they need to know in advance that the DB is unavailable — but that's
-    exactly what we're protecting against. Auto-detection is the right behavior.
+ALL ADAPTERS RECEIVE Settings:
+    ChromaVectorStoreAdapter(settings) — reads chroma_host, chroma_port, etc.
+    QdrantVectorStoreAdapter(settings) — reads qdrant_url, qdrant_api_key, etc.
+    No hardcoded values anywhere in adapters.
 """
 
 import logging
@@ -59,7 +56,7 @@ class VectorStoreFactory:
 
     Usage:
         vector_store = VectorStoreFactory.create(settings)
-        # Returns an adapter that implements BaseVectorStore.
+        # Returns an adapter implementing BaseVectorStore.
         # Caller never knows if it got Chroma, Qdrant, or Simple.
     """
 
@@ -105,9 +102,9 @@ class VectorStoreFactory:
     def _create_chroma(settings: Settings) -> BaseVectorStore:
         """Attempt to create Chroma adapter, fallback to Simple on any failure."""
         try:
-            from app.vectorstores.chroma_store import ChromaVectorStoreAdapter, ChromaSettings
+            from app.vectorstores.chroma_store import ChromaVectorStoreAdapter
             logger.info("VectorStoreFactory: Creating ChromaVectorStoreAdapter...")
-            return ChromaVectorStoreAdapter(ChromaSettings())
+            return ChromaVectorStoreAdapter(settings)
         except ImportError as e:
             logger.warning(
                 f"VectorStoreFactory: chromadb not available ({e}). "
@@ -128,7 +125,7 @@ class VectorStoreFactory:
         try:
             from app.vectorstores.qdrant_store import QdrantVectorStoreAdapter
             logger.info("VectorStoreFactory: Creating QdrantVectorStoreAdapter...")
-            return QdrantVectorStoreAdapter()
+            return QdrantVectorStoreAdapter(settings)
         except ImportError as e:
             logger.warning(
                 f"VectorStoreFactory: qdrant-client not available ({e}). "

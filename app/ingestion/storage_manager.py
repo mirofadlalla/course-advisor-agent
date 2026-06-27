@@ -47,6 +47,8 @@ from llama_index.core import (
 )
 from llama_index.core.embeddings import BaseEmbedding
 
+from app.ingestion.index_bootstrap import validate_index_structure
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,21 +70,23 @@ class StorageManager:
 
     def exists(self) -> bool:
         """
-        Check if a persisted index exists at the configured path.
+        Check if a complete persisted index exists at the configured path.
 
-        Checks for docstore.json — the canonical indicator that a complete
-        LlamaIndex storage exists. If only vector_store.json exists, the
-        index is incomplete and should be rebuilt.
+        Validates docstore, index_store, and vector embeddings — not just
+        the presence of docstore.json. Incomplete directories (e.g. only
+        graph_store.json) are treated as missing so the pipeline rebuilds
+        or bootstraps from a bundled index.
         """
-        docstore_path = self._storage_path / "docstore.json"
-        exists = docstore_path.exists()
-
-        if exists:
-            logger.info(f"StorageManager: Found persisted index at {self._storage_path}")
+        valid, reason = validate_index_structure(self._storage_path)
+        if valid:
+            logger.info(
+                f"StorageManager: Found valid persisted index at {self._storage_path}"
+            )
         else:
-            logger.info(f"StorageManager: No persisted index at {self._storage_path}")
-
-        return exists
+            logger.info(
+                f"StorageManager: No valid persisted index at {self._storage_path} ({reason})"
+            )
+        return valid
 
     def persist(self, index: VectorStoreIndex) -> None:
         """

@@ -61,10 +61,14 @@ class Settings(BaseSettings):
     qdrant_collection: str = "kayfa_knowledge"
 
     # ─── Storage ──────────────────────────────────────────────────────────────
-    # Where the persisted index lives.
+    # Where the persisted index lives at runtime.
     # Local:               ./storage/index
     # HuggingFace Spaces:  /data/index  (persistent volume)
     index_storage_path: str = "storage/index"
+    # Pre-built index shipped in the repo (default: {data_dir}/index).
+    # On HF Spaces startup, if the runtime path is empty but this path is
+    # valid, the index is copied once so cold starts skip re-embedding.
+    bundled_index_path: str = ""
     # Root directory for all knowledge base files (MD + JSON)
     data_dir: str = "data"
 

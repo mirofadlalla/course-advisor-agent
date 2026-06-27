@@ -146,7 +146,7 @@ async def lifespan(app: FastAPI):
 
         # ── Step 6: Run ingestion pipeline ────────────────────────────────
         logger.info("Step 4/9: Running ingestion pipeline (build or load)...")
-        pipeline = IngestionPipeline(index_builder, storage_manager)
+        pipeline = IngestionPipeline(index_builder, storage_manager, settings=settings)
         index, nodes = await pipeline.run()
         logger.info(f"Step 4/9: Index ready with {len(nodes)} nodes.")
 

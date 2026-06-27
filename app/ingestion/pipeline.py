@@ -26,6 +26,8 @@ import logging
 from llama_index.core import VectorStoreIndex
 from llama_index.core.schema import BaseNode
 
+from app.config import Settings
+from app.ingestion.index_bootstrap import bootstrap_index_from_bundle
 from app.ingestion.index_builder import IndexBuilder
 from app.ingestion.storage_manager import StorageManager
 
@@ -53,9 +55,11 @@ class IngestionPipeline:
         self,
         index_builder: IndexBuilder,
         storage_manager: StorageManager,
+        settings: Settings | None = None,
     ) -> None:
         self._builder = index_builder
         self._storage = storage_manager
+        self._settings = settings
         self._nodes: list[BaseNode] = []
 
     async def run(self) -> tuple[VectorStoreIndex, list[BaseNode]]:
@@ -67,6 +71,9 @@ class IngestionPipeline:
                 - The ready-to-query vector index
                 - All chunked nodes (for BM25 index construction)
         """
+        if self._settings is not None:
+            bootstrap_index_from_bundle(self._settings)
+
         if self._storage.exists():
             return await self._load_path()
         else:

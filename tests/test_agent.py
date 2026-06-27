@@ -114,7 +114,7 @@ class TestChatService:
             ChatService()
 
             mock_create.assert_called_once()
-            
+
     def test_agent_shared_across_calls(self):
         """All calls must use the same agent instance — no re-creation per request."""
         service = self._make_service_with_mock_agent("resp")

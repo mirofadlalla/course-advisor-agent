@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     index_storage_path: str = "storage/index"
     # Root directory for all knowledge base files (MD + JSON)
     data_dir: str = "data"
+    # Where metrics are persisted
+    metrics_storage_path: str = "storage/metrics.json"
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
     # chunk_size=512: enough context for meaningful semantic content without

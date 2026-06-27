@@ -64,6 +64,7 @@ from app.ingestion.parsers import CompositeParser
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.storage_manager import StorageManager
 from app.repositories.course_repository import CourseRepository
+from app.repositories.crm_repository import create_crm_repository
 from app.repositories.knowledge_repository import KnowledgeRepository
 from app.repositories.roadmap_repository import RoadmapRepository
 from app.retrieval.bm25_retriever import BM25Retriever
@@ -73,6 +74,8 @@ from app.retrieval.reranker import RerankerFactory
 from app.retrieval.retrieval_service import RetrievalService
 from app.schemas.api import ChatRequest, ChatResponse
 from app.services.chat_service import ChatService
+from app.services.lead_service import LeadService
+from app.services.session_store import SessionStore
 from app.vectorstores.vector_store_factory import VectorStoreFactory
 from app.monitoring.store import metrics_store
 from app.monitoring.router import router as monitoring_router
@@ -174,10 +177,23 @@ async def lifespan(app: FastAPI):
         )
 
         logger.info("Step 8/9: Creating ChatService and registering agent tools...")
-        chat_service = ChatService()
+        crm_repo = create_crm_repository(
+            settings.mongodb_uri,
+            settings.mongodb_database,
+            settings.mongodb_collection,
+        )
+        session_store = SessionStore(max_messages=settings.session_max_messages)
+        lead_service = LeadService(crm_repo)
+        chat_service = ChatService(
+            session_store=session_store,
+            lead_service=lead_service,
+        )
 
         app.state.agent_dependencies = deps
         app.state.chat_service = chat_service
+        app.state.session_store = session_store
+        app.state.lead_service = lead_service
+        app.state.crm_repository = crm_repo
         app.state.pipeline = pipeline
         app.state.storage_manager = storage_manager
         app.state.index_node_count = len(nodes)
@@ -289,6 +305,7 @@ def chat(chat_request: ChatRequest, request: Request):
         result = chat_service.chat(
             question=chat_request.message,
             deps=agent_deps,
+            session_id=chat_request.session_id,
         )
         total_latency_ms = (time.perf_counter() - t_start) * 1000
 
@@ -310,6 +327,10 @@ def chat(chat_request: ChatRequest, request: Request):
             tokens_out=result.get("tokens_out", 0),
             cost_usd=result.get("cost_usd", 0.0),
             request_id=request_id,
+            session_id=chat_request.session_id,
+            visitor_intent=result.get("visitor_intent"),
+            ticket_id=result.get("ticket_id"),
+            lead_qualified=result.get("lead_qualified", False),
         )
 
     except Exception as exc:
@@ -362,6 +383,7 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
             async for event in chat_service.astream(
                 question=chat_request.message,
                 deps=agent_deps,
+                session_id=chat_request.session_id,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
 

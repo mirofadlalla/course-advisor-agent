@@ -69,6 +69,7 @@ async def search_knowledge(
     - Specific courses: name, duration, level, prerequisites, instructor, price, link
     - Learning tracks and roadmaps: what's included, skills gained, total duration
     - Diplomas and bootcamps: curriculum, duration, career outcomes, enrollment
+    - Free educational content vs paid courses vs tracks vs live diplomas
     - Pricing: course prices, track prices, subscription options
     - Company information: who is Kayfa, contact details, office locations
     - Policies: refunds, cancellations, payment methods, subscriptions

@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     # of vector_store_backend — no external DB connections attempted.
     is_hf_spaces: bool = False
 
+    # ─── CRM / MongoDB ────────────────────────────────────────────────────────
+    # Leave MONGODB_URI empty to use in-memory CRM (local dev / tests).
+    mongodb_uri: str = ""
+    mongodb_database: str = "kayfa_crm"
+    mongodb_collection: str = "tickets"
+
+    # ─── Session memory ───────────────────────────────────────────────────────
+    session_max_messages: int = 40
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

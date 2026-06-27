@@ -33,3 +33,7 @@ class ChatResponse(BaseModel):
     tokens_out: int = 0
     cost_usd: float = 0.0
     request_id: str = ""
+    session_id: Optional[str] = None
+    visitor_intent: Optional[str] = None
+    ticket_id: Optional[str] = None
+    lead_qualified: bool = False

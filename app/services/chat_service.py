@@ -34,6 +34,10 @@ from pydantic_graph import End
 
 from app.agent import create_agent
 from app.dependencies import AgentDependencies
+from app.repositories.crm_repository import InMemoryCrmRepository
+from app.sales.intent import build_intent_instructions, detect_intent
+from app.services.lead_service import LeadService
+from app.services.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +93,72 @@ def _extract_usage(result: Any) -> tuple[int, int]:
 class ChatService:
     """Thin orchestrator between FastAPI and the PydanticAI agent."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        session_store: SessionStore | None = None,
+        lead_service: LeadService | None = None,
+    ) -> None:
         self.agent = create_agent()
+        self.session_store = session_store or SessionStore()
+        self.lead_service = lead_service or LeadService(
+            crm_repository=InMemoryCrmRepository()
+        )
         logger.info("ChatService initialized.")
+
+    def _prepare_turn(
+        self, question: str, session_id: str | None
+    ) -> tuple[list, str, list[str], str]:
+        history = self.session_store.get_history(session_id)
+        user_history = self.session_store.get_user_messages(session_id)
+        intent = detect_intent(question, user_history)
+        instructions = build_intent_instructions(intent)
+        return history, instructions, user_history, intent.value
+
+    async def _finalize_turn(
+        self,
+        *,
+        session_id: str | None,
+        question: str,
+        response: str,
+        user_history: list[str],
+        intent_value: str,
+    ) -> dict[str, Any]:
+        from app.sales.intent import VisitorIntent
+
+        intent = VisitorIntent(intent_value)
+        _, signals = self.lead_service.analyze_turn(
+            question, user_history, response
+        )
+        ticket = await self.lead_service.maybe_create_ticket(
+            session_id=session_id,
+            message=question,
+            history=user_history,
+            assistant_reply=response,
+            intent=intent,
+            signals=signals,
+        )
+        self.session_store.append_turn(session_id, question, response)
+        return {
+            "visitor_intent": intent_value,
+            "lead_qualified": signals.is_qualified,
+            "ticket_id": ticket.ticket_id if ticket else None,
+        }
+
+    def _finalize_turn_sync(self, **kwargs: Any) -> dict[str, Any]:
+        try:
+            asyncio.get_running_loop()
+            in_async_context = True
+        except RuntimeError:
+            in_async_context = False
+
+        if not in_async_context:
+            return asyncio.run(self._finalize_turn(**kwargs))
+
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, self._finalize_turn(**kwargs))
+            return future.result()
 
     async def _emit_text_stream_events(
         self,
@@ -131,6 +198,8 @@ class ChatService:
         question: str,
         deps: AgentDependencies,
         queue: asyncio.Queue[Any],
+        message_history: list | None = None,
+        instructions: str | None = None,
     ) -> Any:
         """
         Run the agent graph with hybrid streaming.
@@ -140,7 +209,12 @@ class ChatService:
         """
         tools_executed = False
 
-        async with self.agent.iter(question, deps=deps) as agent_run:
+        async with self.agent.iter(
+            question,
+            deps=deps,
+            message_history=message_history or None,
+            instructions=instructions,
+        ) as agent_run:
             node = agent_run.next_node
 
             while not isinstance(node, End):
@@ -188,11 +262,17 @@ class ChatService:
             return result
 
     async def astream(
-        self, question: str, deps: AgentDependencies
+        self,
+        question: str,
+        deps: AgentDependencies,
+        session_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream agent progress and native LLM tokens over SSE."""
         logger.info(f"ChatService.astream: question='{question[:80]}'")
 
+        history, instructions, user_history, intent_value = self._prepare_turn(
+            question, session_id
+        )
         queue: asyncio.Queue[Any] = asyncio.Queue()
 
         async def producer() -> None:
@@ -204,13 +284,24 @@ class ChatService:
                 for attempt in range(1, _MAX_TOOL_USE_RETRIES + 1):
                     try:
                         result = await self._drive_iter_with_streaming(
-                            question, deps, queue
+                            question,
+                            deps,
+                            queue,
+                            message_history=history,
+                            instructions=instructions,
                         )
                         phase = "generation"
                         agent_process_ms = round(
                             (time.perf_counter() - t0) * 1000, 2
                         )
                         tokens_in, tokens_out = _extract_usage(result)
+                        meta = await self._finalize_turn(
+                            session_id=session_id,
+                            question=question,
+                            response=result.output,
+                            user_history=user_history,
+                            intent_value=intent_value,
+                        )
                         await queue.put(
                             {
                                 "type": "done",
@@ -219,6 +310,7 @@ class ChatService:
                                 "tokens_in": tokens_in,
                                 "tokens_out": tokens_out,
                                 "cost_usd": _usage_cost(tokens_in, tokens_out),
+                                **meta,
                             }
                         )
                         return
@@ -268,18 +360,38 @@ class ChatService:
         finally:
             await task
 
-    async def achat(self, question: str, deps: AgentDependencies) -> dict:
+    async def achat(
+        self,
+        question: str,
+        deps: AgentDependencies,
+        session_id: str | None = None,
+    ) -> dict:
         """Async non-streaming chat — uses agent.run() on the main event loop."""
         logger.info(f"ChatService.achat: question='{question[:80]}'")
 
+        history, instructions, user_history, intent_value = self._prepare_turn(
+            question, session_id
+        )
         t0 = time.perf_counter()
         last_exc: Exception | None = None
 
         for attempt in range(1, _MAX_TOOL_USE_RETRIES + 1):
             try:
-                result = await self.agent.run(question, deps=deps)
+                result = await self.agent.run(
+                    question,
+                    deps=deps,
+                    message_history=history or None,
+                    instructions=instructions,
+                )
                 agent_process_ms = (time.perf_counter() - t0) * 1000
                 tokens_in, tokens_out = _extract_usage(result)
+                meta = await self._finalize_turn(
+                    session_id=session_id,
+                    question=question,
+                    response=result.output,
+                    user_history=user_history,
+                    intent_value=intent_value,
+                )
 
                 return {
                     "response": result.output,
@@ -289,6 +401,7 @@ class ChatService:
                     "cost_usd": _usage_cost(tokens_in, tokens_out),
                     "success": True,
                     "error_msg": None,
+                    **meta,
                 }
 
             except Exception as exc:
@@ -306,16 +419,36 @@ class ChatService:
 
         raise RuntimeError("achat retry loop exhausted") from last_exc
 
-    def chat(self, question: str, deps: AgentDependencies) -> dict:
+    def chat(
+        self,
+        question: str,
+        deps: AgentDependencies,
+        session_id: str | None = None,
+    ) -> dict:
         """Sync chat — uses run_sync() from Starlette's thread pool."""
         logger.info(f"ChatService.chat: question='{question[:80]}'")
 
+        history, instructions, user_history, intent_value = self._prepare_turn(
+            question, session_id
+        )
         t0 = time.perf_counter()
 
         try:
-            result = self.agent.run_sync(question, deps=deps)
+            result = self.agent.run_sync(
+                question,
+                deps=deps,
+                message_history=history or None,
+                instructions=instructions,
+            )
             agent_process_ms = (time.perf_counter() - t0) * 1000
             tokens_in, tokens_out = _extract_usage(result)
+            meta = self._finalize_turn_sync(
+                session_id=session_id,
+                question=question,
+                response=result.output,
+                user_history=user_history,
+                intent_value=intent_value,
+            )
 
             return {
                 "response": result.output,
@@ -325,6 +458,7 @@ class ChatService:
                 "cost_usd": _usage_cost(tokens_in, tokens_out),
                 "success": True,
                 "error_msg": None,
+                **meta,
             }
 
         except Exception as exc:

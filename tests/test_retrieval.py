@@ -41,7 +41,7 @@ def make_settings(**overrides):
 
 def run(coro):
     """Helper to run async code in sync tests."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # ── BM25Retriever ──────────────────────────────────────────────────────────────

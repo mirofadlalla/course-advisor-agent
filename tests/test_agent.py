@@ -62,9 +62,14 @@ class TestCreateAgent:
 class TestChatService:
     def _make_service_with_mock_agent(self, agent_output: str):
         """Build a ChatService whose agent is replaced by a mock."""
+        from app.repositories.crm_repository import InMemoryCrmRepository
         from app.services.chat_service import ChatService
+        from app.services.lead_service import LeadService
+        from app.services.session_store import SessionStore
 
         service = ChatService.__new__(ChatService)
+        service.session_store = SessionStore()
+        service.lead_service = LeadService(InMemoryCrmRepository())
 
         mock_result = MagicMock()
         mock_result.output = agent_output
@@ -89,7 +94,8 @@ class TestChatService:
 
         service.chat("Tell me about Python", deps)
 
-        service.agent.run_sync.assert_called_once_with("Tell me about Python", deps=deps)
+        service.agent.run_sync.assert_called_once()
+        assert service.agent.run_sync.call_args.args[0] == "Tell me about Python"
 
     def test_chat_passes_deps_to_agent(self):
         service = self._make_service_with_mock_agent("answer")

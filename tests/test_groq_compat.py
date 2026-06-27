@@ -40,6 +40,17 @@ class TestParseXmlToolCall:
         assert parse_xml_tool_call("<function=foo {not json}</function>") is None
 
 
+class TestIsToolUseFailed:
+    def test_detects_message_without_status_code(self):
+        from app.services.chat_service import _is_tool_use_failed
+
+        exc = Exception(
+            "Failed to call a function. Please adjust your prompt. "
+            "See 'failed_generation' for more details."
+        )
+        assert _is_tool_use_failed(exc) is True
+
+
 class TestInstallGroqToolCallCompat:
     def test_patch_recoveres_xml_failed_generation(self):
         install_groq_tool_call_compat()

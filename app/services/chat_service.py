@@ -25,9 +25,10 @@ CHANGE FROM PREVIOUS VERSION:
     The response dict shape is extended with timing + token fields.
 
 STREAMING (astream):
-    Uses PydanticAI run_stream() for native LLM token streaming after tools
-    complete. Application status events (not chain-of-thought) are emitted
-    via event_stream_handler during tool execution.
+    Uses PydanticAI run_stream_events() so tool calls go through agent.run()
+    (non-streaming Groq requests where groq_compat recovers malformed tool XML).
+    Final-answer tokens arrive as PartDeltaEvent / TextPart deltas in real time.
+    Application status events (not chain-of-thought) come from tool call events.
 """
 
 from __future__ import annotations
@@ -38,7 +39,16 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai import AgentRunResultEvent
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    FinalResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 
 from app.agent import create_agent
 from app.dependencies import AgentDependencies
@@ -72,16 +82,13 @@ _TOOL_STATUS_DONE: dict[str, str] = {
 
 def _is_tool_use_failed(exc: Exception) -> bool:
     """
-    Return True when the exception is the Groq 400 tool_use_failed error.
+    Return True when the exception is the Groq tool_use_failed error.
 
     PydanticAI wraps the raw httpx/Groq error in various ways depending on
-    version; we check the string representation which always contains the
-    error code from Groq's JSON body.
+    version; the message may omit the error code or HTTP status.
     """
     msg = str(exc)
-    return "tool_use_failed" in msg or (
-        "400" in msg and "Failed to call a function" in msg
-    )
+    return "tool_use_failed" in msg or "Failed to call a function" in msg
 
 
 def _usage_cost(tokens_in: int, tokens_out: int) -> float:
@@ -138,63 +145,107 @@ class ChatService:
             phase = "tool"
             last_exc: Exception | None = None
 
-            async def event_stream_handler(_ctx: Any, events: Any) -> None:
-                async for event in events:
-                    if isinstance(event, FunctionToolCallEvent):
-                        text = _TOOL_STATUS_START.get(event.part.tool_name)
-                        if text:
-                            await queue.put({"type": "status", "text": text})
-                    elif isinstance(event, FunctionToolResultEvent):
-                        tool_name = getattr(event.part, "tool_name", "")
-                        text = _TOOL_STATUS_DONE.get(tool_name)
-                        if text:
-                            await queue.put({"type": "status", "text": text})
-
             try:
                 for attempt in range(1, _MAX_TOOL_USE_RETRIES + 1):
                     try:
-                        async with self.agent.run_stream(
+                        # run_stream_events() wraps agent.run() — tool calls use
+                        # non-streaming Groq requests where groq_compat can recover
+                        # malformed XML tool calls.  run_stream() would hit Groq's
+                        # streaming API on the tool turn and fail at peek time
+                        # before recovery runs.
+                        async with self.agent.run_stream_events(
                             question,
                             deps=deps,
-                            event_stream_handler=event_stream_handler,
-                        ) as result:
-                            phase = "generation"
-                            await queue.put(
-                                {"type": "status", "text": "Generating answer..."}
-                            )
-
+                        ) as events:
+                            in_final_answer = False
                             streaming_started = False
-                            async for text in result.stream_text(
-                                delta=True, debounce_by=None
-                            ):
-                                if not text:
-                                    continue
-                                if not streaming_started:
+
+                            async for event in events:
+                                if isinstance(event, FunctionToolCallEvent):
+                                    text = _TOOL_STATUS_START.get(
+                                        event.part.tool_name
+                                    )
+                                    if text:
+                                        await queue.put(
+                                            {"type": "status", "text": text}
+                                        )
+                                elif isinstance(event, FunctionToolResultEvent):
+                                    tool_name = getattr(
+                                        event.part, "tool_name", ""
+                                    )
+                                    text = _TOOL_STATUS_DONE.get(tool_name)
+                                    if text:
+                                        await queue.put(
+                                            {"type": "status", "text": text}
+                                        )
+                                elif isinstance(event, FinalResultEvent):
+                                    in_final_answer = True
+                                    phase = "generation"
                                     await queue.put(
                                         {
                                             "type": "status",
-                                            "text": "Streaming response...",
+                                            "text": "Generating answer...",
                                         }
                                     )
-                                    streaming_started = True
-                                await queue.put({"type": "token", "text": text})
+                                elif in_final_answer and isinstance(
+                                    event, PartStartEvent
+                                ):
+                                    if isinstance(event.part, TextPart):
+                                        content = event.part.content
+                                        if content:
+                                            if not streaming_started:
+                                                await queue.put(
+                                                    {
+                                                        "type": "status",
+                                                        "text": "Streaming response...",
+                                                    }
+                                                )
+                                                streaming_started = True
+                                            await queue.put(
+                                                {"type": "token", "text": content}
+                                            )
+                                elif in_final_answer and isinstance(
+                                    event, PartDeltaEvent
+                                ):
+                                    if isinstance(event.delta, TextPartDelta):
+                                        delta = event.delta.content_delta
+                                        if delta:
+                                            if not streaming_started:
+                                                await queue.put(
+                                                    {
+                                                        "type": "status",
+                                                        "text": "Streaming response...",
+                                                    }
+                                                )
+                                                streaming_started = True
+                                            await queue.put(
+                                                {"type": "token", "text": delta}
+                                            )
+                                elif isinstance(event, AgentRunResultEvent):
+                                    agent_process_ms = round(
+                                        (time.perf_counter() - t0) * 1000, 2
+                                    )
+                                    tokens_in, tokens_out = _extract_usage(
+                                        event.result
+                                    )
+                                    await queue.put(
+                                        {
+                                            "type": "done",
+                                            "latency_ms": agent_process_ms,
+                                            "agent_process_ms": agent_process_ms,
+                                            "tokens_in": tokens_in,
+                                            "tokens_out": tokens_out,
+                                            "cost_usd": _usage_cost(
+                                                tokens_in, tokens_out
+                                            ),
+                                        }
+                                    )
+                                    return
 
-                            agent_process_ms = round(
-                                (time.perf_counter() - t0) * 1000, 2
-                            )
-                            tokens_in, tokens_out = _extract_usage(result)
-
-                            await queue.put(
-                                {
-                                    "type": "done",
-                                    "latency_ms": agent_process_ms,
-                                    "agent_process_ms": agent_process_ms,
-                                    "tokens_in": tokens_in,
-                                    "tokens_out": tokens_out,
-                                    "cost_usd": _usage_cost(tokens_in, tokens_out),
-                                }
-                            )
-                            return
+                        # Iterator ended without AgentRunResultEvent
+                        raise RuntimeError(
+                            "Agent run finished without a result event"
+                        )
 
                     except Exception as exc:
                         last_exc = exc

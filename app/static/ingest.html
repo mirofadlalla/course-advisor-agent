@@ -380,6 +380,22 @@
             <span class="stat-label">RAG Enabled</span>
             <span class="stat-value" id="idx-rag">—</span>
           </div>
+          <div class="stat-row">
+            <span class="stat-label">Upload Dir</span>
+            <span class="stat-value" id="idx-upload-root" style="font-size:0.68rem;word-break:break-all;">—</span>
+          </div>
+        </div>
+
+        <!-- Download index -->
+        <div class="side-card">
+          <div class="side-card-title">💾 Backup Index</div>
+          <p class="text-xs text-muted" style="margin-bottom:12px;">
+            Download the full vector index as a <code>.zip</code> to back up or restore across deployments.
+          </p>
+          <button class="btn btn-secondary w-full" id="btn-download-index">
+            ⬇ Download Index ZIP
+          </button>
+          <div id="download-status" style="margin-top:8px;font-size:0.75rem;color:var(--text-muted);display:none;"></div>
         </div>
 
         <!-- Rebuild card -->
@@ -444,6 +460,8 @@ const btnUploadAll = $('btn-upload-all');
 const btnClearList = $('btn-clear-list');
 const btnRebuild   = $('btn-rebuild');
 const btnDelete    = $('btn-delete-index');
+const btnDownload  = $('btn-download-index');
+const dlStatus     = $('download-status');
 const eventsLog    = $('events-log');
 const rebuildProg  = $('rebuild-progress');
 
@@ -665,6 +683,39 @@ btnDelete.addEventListener('click', async () => {
   }
 });
 
+// ── Download index ───────────────────────────────
+btnDownload.addEventListener('click', async () => {
+  dlStatus.style.display = 'block';
+  dlStatus.textContent = '⏳ Preparing zip…';
+  btnDownload.disabled = true;
+  try {
+    const res = await fetch('/ingest/download');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    // Extract filename from Content-Disposition header
+    const cd = res.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : 'rag_index.zip';
+    // Trigger browser download
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    dlStatus.textContent = `✅ Downloaded: ${filename}`;
+    addEvent('download', `💾 Index downloaded as ${filename}`, true);
+  } catch (err) {
+    dlStatus.textContent = '❌ ' + err.message;
+    toast('Download failed: ' + err.message, 'error');
+  } finally {
+    btnDownload.disabled = false;
+  }
+});
+
 // ── Status ─────────────────────────────────────────
 async function loadStatus() {
   try {
@@ -693,7 +744,8 @@ function getEventText(e) {
     if (e.success) return `✅ Rebuild: ${e.node_count_after} nodes (${e.duration_ms?.toFixed(0)}ms)`;
     return `❌ Rebuild failed: ${e.error_msg}`;
   }
-  if (e.action === 'delete')  return '🗑 Index deleted';
+  if (e.action === 'delete')   return '🗑 Index deleted';
+  if (e.action === 'download') return '💾 Index downloaded';
   return e.action;
 }
 
@@ -709,6 +761,8 @@ function renderStatus(data) {
   $('idx-rag').innerHTML = data.rag_enabled
     ? '<span class="badge badge-success">Enabled</span>'
     : '<span class="badge badge-error">Disabled</span>';
+  const uploadEl = $('idx-upload-root');
+  if (uploadEl) uploadEl.textContent = data.upload_root || '—';
 }
 
 // ── Events log ─────────────────────────────────────

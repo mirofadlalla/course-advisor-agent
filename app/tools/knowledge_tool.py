@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 async def search_knowledge(
     ctx: RunContext[AgentDependencies],
     query: str,
-    doc_type: str | None = None,
+    doc_type: str = "",
 ) -> list[SearchResult]:
     """
     Search the Kayfa knowledge base for information relevant to the user's question.
@@ -79,9 +79,8 @@ async def search_knowledge(
     Parameters:
         query:    The specific question or topic to search for.
                   Be specific: "Python course duration" is better than "Python".
-        doc_type: Optional filter to narrow results to a specific category.
-                  Options: "course", "roadmap", "markdown"
-                  Leave as None to search across all content types.
+    doc_type: Use "" (empty string) to search all content types. Otherwise filter by:
+                  "course", "roadmap", or "markdown".
 
     Returns:
         A list of relevant text chunks from the knowledge base.

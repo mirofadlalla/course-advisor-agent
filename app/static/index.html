@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" id="html-root">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,6 +7,208 @@
   <meta name="description" content="Chat with the Course Advisor AI agent powered by RAG and Groq LLM." />
   <link rel="stylesheet" href="/static/style.css" />
   <style>
+    /* ── RTL Support ──────────────────────────────────── */
+    [dir="rtl"] .msg { flex-direction: row-reverse; }
+    [dir="rtl"] .msg-body { border-radius: 16px 4px 16px 16px; text-align: right; }
+    [dir="rtl"] .msg.user .msg-body { border-radius: 4px 16px 16px 16px; }
+    [dir="rtl"] .msg-header { flex-direction: row-reverse; }
+    [dir="rtl"] .msg-footer { flex-direction: row-reverse; }
+    [dir="rtl"] .sidebar { border-right: none; border-left: 1px solid var(--border); }
+    [dir="rtl"] .chat-inputbar textarea { text-align: right; direction: rtl; }
+
+    /* ── Auth Screen ──────────────────────────────────── */
+    #auth-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      background: var(--bg-deep);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fade-in 0.4s var(--ease);
+    }
+
+    #auth-screen::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 20%, rgba(108,99,255,0.18) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 80% 80%, rgba(6,182,212,0.1) 0%, transparent 55%);
+      pointer-events: none;
+    }
+
+    .auth-card {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      background: rgba(13, 18, 32, 0.9);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-xl);
+      padding: 40px 36px;
+      backdrop-filter: blur(24px);
+      box-shadow: var(--shadow-lg), 0 0 60px rgba(108,99,255,0.12);
+    }
+
+    .auth-logo {
+      width: 60px; height: 60px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: var(--radius-lg);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+      margin: 0 auto 20px;
+      box-shadow: 0 0 30px var(--primary-glow);
+      animation: float 4s ease-in-out infinite;
+    }
+
+    .auth-title {
+      text-align: center;
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      background: linear-gradient(135deg, var(--text-primary), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 6px;
+    }
+
+    .auth-subtitle {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-bottom: 28px;
+    }
+
+    .auth-tabs {
+      display: flex;
+      gap: 2px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      padding: 3px;
+      margin-bottom: 24px;
+    }
+
+    .auth-tab {
+      flex: 1;
+      padding: 8px;
+      border: none;
+      border-radius: calc(var(--radius-md) - 3px);
+      background: transparent;
+      color: var(--text-muted);
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--dur) var(--ease);
+    }
+
+    .auth-tab.active {
+      background: var(--primary);
+      color: #fff;
+      box-shadow: 0 2px 8px var(--primary-glow);
+    }
+
+    .auth-field {
+      margin-bottom: 14px;
+    }
+
+    .auth-field label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    .auth-field input {
+      width: 100%;
+      padding: 11px 14px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+    }
+
+    .auth-field input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(108,99,255,0.15);
+    }
+
+    .auth-field input::placeholder { color: var(--text-muted); }
+
+    .auth-submit {
+      width: 100%;
+      padding: 13px;
+      margin-top: 6px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border: none;
+      border-radius: var(--radius-md);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all var(--dur) var(--ease);
+      box-shadow: 0 4px 14px var(--primary-glow);
+    }
+
+    .auth-submit:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 24px var(--primary-glow);
+    }
+
+    .auth-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .auth-error {
+      padding: 10px 14px;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: var(--radius-md);
+      color: #f87171;
+      font-size: 0.82rem;
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    .auth-error.visible { display: block; }
+
+    /* ── Nav user badge ───────────────────────────────── */
+    .nav-user {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .nav-user-avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px;
+    }
+
+    .btn-logout {
+      background: none;
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all var(--dur) var(--ease);
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .btn-logout:hover { border-color: var(--error); color: #f87171; }
+  </style>
     /* ── Chat layout ─────────────────────────────────── */
     .chat-layout {
       display: flex;
@@ -462,6 +664,52 @@
 </head>
 <body>
 
+<!-- ── Auth Screen ─────────────────────────────────── -->
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">🎓</div>
+    <h1 class="auth-title">Course Advisor</h1>
+    <p class="auth-subtitle">AI-powered RAG Agent · سجّل الدخول للبدء</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login" onclick="switchTab('login')">تسجيل الدخول</button>
+      <button class="auth-tab" id="tab-register" onclick="switchTab('register')">إنشاء حساب</button>
+    </div>
+
+    <div id="auth-error" class="auth-error"></div>
+
+    <!-- Login form -->
+    <div id="form-login">
+      <div class="auth-field">
+        <label>البريد الإلكتروني / Email</label>
+        <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="auth-field">
+        <label>كلمة المرور / Password</label>
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+      <button class="auth-submit" id="btn-login" onclick="doLogin()">دخول ←</button>
+    </div>
+
+    <!-- Register form -->
+    <div id="form-register" style="display:none;">
+      <div class="auth-field">
+        <label>الاسم / Full Name</label>
+        <input type="text" id="reg-name" placeholder="Ahmed Mohamed" autocomplete="name" />
+      </div>
+      <div class="auth-field">
+        <label>البريد الإلكتروني / Email</label>
+        <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="auth-field">
+        <label>كلمة المرور / Password</label>
+        <input type="password" id="reg-password" placeholder="8+ characters" autocomplete="new-password" />
+      </div>
+      <button class="auth-submit" id="btn-register" onclick="doRegister()">إنشاء الحساب ←</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Navigation ───────────────────────────────────── -->
 <nav class="nav">
   <a href="/" class="nav-brand">
@@ -475,6 +723,11 @@
     <a href="/" class="nav-link active">💬 Chat</a>
     <a href="/ingest-ui" class="nav-link">📂 Ingest</a>
     <a href="/monitor-ui" class="nav-link">📊 Monitor</a>
+    <div class="nav-user" id="nav-user" style="display:none;">
+      <div class="nav-user-avatar" id="nav-avatar">👤</div>
+      <span id="nav-email"></span>
+      <button class="btn-logout" onclick="doLogout()">خروج</button>
+    </div>
   </div>
 </nav>
 
@@ -566,10 +819,128 @@
 
 <script>
 /* ══════════════════════════════════════════════════
-   Chat UI — vanilla JS
+   Chat UI — vanilla JS  (auth-aware + RTL support)
    ══════════════════════════════════════════════════ */
 
 const $ = id => document.getElementById(id);
+
+// ── Auth helpers ───────────────────────────────────
+const AUTH_KEY   = 'ca_token';
+const RTOKEN_KEY = 'ca_refresh';
+const USER_KEY   = 'ca_user';
+
+function getToken()   { return localStorage.getItem(AUTH_KEY); }
+function getUser()    { try { return JSON.parse(localStorage.getItem(USER_KEY)); } catch { return null; } }
+
+function storeAuth(data) {
+  localStorage.setItem(AUTH_KEY,   data.access_token);
+  localStorage.setItem(RTOKEN_KEY, data.refresh_token || '');
+  localStorage.setItem(USER_KEY,   JSON.stringify(data.user || {}));
+}
+
+function clearAuth() {
+  localStorage.removeItem(AUTH_KEY);
+  localStorage.removeItem(RTOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+function authHeaders() {
+  const t = getToken();
+  return t
+    ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${t}` }
+    : { 'Content-Type': 'application/json' };
+}
+
+// ── RTL detection ──────────────────────────────────
+const AR_RE = /[\u0600-\u06FF]/;
+function detectDir(text) { return AR_RE.test(text) ? 'rtl' : 'ltr'; }
+
+function applyPageDir(text) {
+  const dir = detectDir(text);
+  document.getElementById('html-root').setAttribute('dir', dir);
+  document.getElementById('html-root').setAttribute('lang', dir === 'rtl' ? 'ar' : 'en');
+}
+
+// ── Auth screen ────────────────────────────────────
+function switchTab(tab) {
+  $('form-login').style.display    = tab === 'login'    ? '' : 'none';
+  $('form-register').style.display = tab === 'register' ? '' : 'none';
+  $('tab-login').classList.toggle('active',    tab === 'login');
+  $('tab-register').classList.toggle('active', tab === 'register');
+  $('auth-error').classList.remove('visible');
+}
+
+function showAuthError(msg) {
+  const el = $('auth-error');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+async function doLogin() {
+  const email    = $('login-email').value.trim();
+  const password = $('login-password').value;
+  if (!email || !password) return showAuthError('يرجى ملء جميع الحقول');
+  $('btn-login').disabled = true;
+  $('auth-error').classList.remove('visible');
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return showAuthError(data.detail || 'فشل تسجيل الدخول');
+    storeAuth(data);
+    onAuthSuccess();
+  } catch (e) {
+    showAuthError('خطأ في الاتصال بالخادم');
+  } finally {
+    $('btn-login').disabled = false;
+  }
+}
+
+async function doRegister() {
+  const name     = $('reg-name').value.trim();
+  const email    = $('reg-email').value.trim();
+  const password = $('reg-password').value;
+  if (!name || !email || !password) return showAuthError('يرجى ملء جميع الحقول');
+  if (password.length < 8) return showAuthError('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
+  $('btn-register').disabled = true;
+  $('auth-error').classList.remove('visible');
+  try {
+    const res = await fetch('/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return showAuthError(data.detail || 'فشل إنشاء الحساب');
+    storeAuth(data);
+    onAuthSuccess();
+  } catch (e) {
+    showAuthError('خطأ في الاتصال بالخادم');
+  } finally {
+    $('btn-register').disabled = false;
+  }
+}
+
+function onAuthSuccess() {
+  $('auth-screen').style.display = 'none';
+  const user = getUser();
+  if (user) {
+    const email = user.email || '';
+    $('nav-email').textContent = email;
+    $('nav-avatar').textContent = email.charAt(0).toUpperCase() || '👤';
+    $('nav-user').style.display = 'flex';
+  }
+}
+
+function doLogout() {
+  clearAuth();
+  state.sessions = [];
+  saveState();
+  location.reload();
+}
 
 // ── State ──────────────────────────────────────────
 const state = {
@@ -583,7 +954,6 @@ const messagesInner  = $('messages-inner');
 const chatInput      = $('chat-input');
 const sendBtn        = $('send-btn');
 const sessionList    = $('session-list');
-const welcomeScreen  = $('welcome-screen');
 const lastStats      = $('last-stats');
 const lastLatency    = $('last-latency');
 const lastTokens     = $('last-tokens');
@@ -637,7 +1007,6 @@ function getSession() {
 
 function renderMessages() {
   const s = getSession();
-  // Clear dynamic messages (keep welcome if needed)
   messagesInner.innerHTML = '';
 
   if (!s || s.messages.length === 0) {
@@ -724,7 +1093,15 @@ async function sendMessage() {
   const text = chatInput.value.trim();
   if (!text || state.loading) return;
 
-  // Ensure we have an active session
+  // Guard: must be logged in
+  if (!getToken()) {
+    $('auth-screen').style.display = 'flex';
+    return;
+  }
+
+  // Apply RTL to page based on user's message language
+  applyPageDir(text);
+
   if (state.activeIdx < 0) createSession();
 
   const s = getSession();
@@ -738,11 +1115,9 @@ async function sendMessage() {
   saveState();
   renderSessions();
 
-  // Clear input
   chatInput.value = '';
   autoResize();
 
-  // Show user bubble + typing indicator
   if (messagesInner.querySelector('#welcome-screen')) {
     messagesInner.innerHTML = '';
   }
@@ -808,9 +1183,18 @@ async function sendMessage() {
   try {
     const res = await fetch('/chat/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ message: text, session_id: s.id }),
     });
+
+    // Handle 401 → show login screen
+    if (res.status === 401) {
+      removeTypingIndicator();
+      clearAuth();
+      $('auth-screen').style.display = 'flex';
+      toast('انتهت الجلسة، يرجى تسجيل الدخول مجدداً', 'error');
+      return;
+    }
 
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
@@ -824,7 +1208,7 @@ async function sendMessage() {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line
+      buffer = lines.pop();
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
@@ -837,6 +1221,11 @@ async function sendMessage() {
         } else if (evt.type === 'token') {
           ensureStreamBubble();
           streamedContent += evt.text;
+          // Apply RTL to response if Arabic
+          if (AR_RE.test(streamedContent.slice(0,100))) {
+            streamBodyEl.setAttribute('dir', 'rtl');
+            streamBodyEl.style.textAlign = 'right';
+          }
           streamBodyEl.innerHTML = renderMarkdown(escHtml(streamedContent));
           scrollToBottom();
 
@@ -939,7 +1328,6 @@ function escAttr(str) {
 }
 
 function renderMarkdown(html) {
-  // Very simple markdown: bold, italic, code, headers, line breaks
   return html
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
@@ -976,9 +1364,16 @@ function toast(msg, type = 'info') {
   setTimeout(() => t.remove(), 4000);
 }
 
+// ── Keyboard shortcuts on auth forms ──────────────
+['login-email','login-password'].forEach(id => {
+  $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+});
+['reg-name','reg-email','reg-password'].forEach(id => {
+  $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); });
+});
+
 // ── Event bindings ─────────────────────────────────
 $('btn-new-chat').addEventListener('click', createSession);
-
 sendBtn.addEventListener('click', sendMessage);
 
 chatInput.addEventListener('keydown', e => {
@@ -992,14 +1387,22 @@ chatInput.addEventListener('input', autoResize);
 
 // ── Init ───────────────────────────────────────────
 (function init() {
-  if (state.sessions.length > 0) {
-    state.activeIdx = 0;
+  const token = getToken();
+  if (!token) {
+    // Show auth screen, hide chat
+    $('auth-screen').style.display = 'flex';
   } else {
-    createSession();
-    return;
+    // Already logged in
+    onAuthSuccess();
+    if (state.sessions.length > 0) {
+      state.activeIdx = 0;
+    } else {
+      createSession();
+      return;
+    }
+    renderSessions();
+    renderMessages();
   }
-  renderSessions();
-  renderMessages();
 })();
 </script>
 

@@ -51,12 +51,84 @@ class ChatService:
         self.agent = create_agent()
         logger.info("ChatService initialized.")
 
+    async def achat(self, question: str, deps: AgentDependencies) -> dict:
+        """
+        Async version of chat(). Use this from async code (e.g. /chat/stream).
+
+        WHY THIS EXISTS (BUG FIX):
+            The old pattern was:
+                loop.run_in_executor(None, lambda: chat_service.chat(...))
+            which calls agent.run_sync() — i.e. loop.run_until_complete() —
+            inside a WORKER THREAD with its own freshly-created event loop.
+
+            But self.agent (and the AsyncGroq/httpx.AsyncClient inside it) was
+            constructed ONCE in lifespan(), bound to the MAIN uvicorn event loop.
+            Reusing that same async HTTP client from a *different* event loop
+            (a new one per worker thread) is explicitly unsafe in httpx/asyncio:
+            internal locks, connection-pool state, and HTTP/2 framing can be
+            corrupted/interleaved across concurrent requests, which is
+            consistent with seeing genuine "400 Bad Request" responses come
+            back from Groq under concurrent load (multiple users / monitoring
+            polling /metrics at the same time) even though the request body
+            constructed by pydantic-ai is valid.
+
+            FIX: never hop threads/event loops. Call the agent with `await
+            self.agent.run(...)` directly inside the SAME event loop that
+            owns the httpx client (the main uvicorn loop). No run_sync, no
+            run_in_executor, no thread pool.
+        """
+        logger.info(f"ChatService.achat: question='{question[:80]}'")
+
+        t0 = time.perf_counter()
+        tokens_in = 0
+        tokens_out = 0
+
+        try:
+            result = await self.agent.run(question, deps=deps)
+            agent_process_ms = (time.perf_counter() - t0) * 1000
+
+            logger.debug(f"ChatService.achat: messages={result.all_messages()}")
+
+            try:
+                usage = result.usage()
+                if usage is not None:
+                    tokens_in = getattr(usage, "request_tokens", 0) or 0
+                    tokens_out = getattr(usage, "response_tokens", 0) or 0
+            except Exception as usage_err:
+                logger.debug(f"Could not extract usage: {usage_err}")
+
+            cost_usd = (
+                (tokens_in / 1_000_000) * _COST_PER_1M_IN
+                + (tokens_out / 1_000_000) * _COST_PER_1M_OUT
+            )
+
+            return {
+                "response": result.output,
+                "agent_process_ms": round(agent_process_ms, 2),
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "cost_usd": round(cost_usd, 8),
+                "success": True,
+                "error_msg": None,
+            }
+
+        except Exception as exc:
+            agent_process_ms = (time.perf_counter() - t0) * 1000
+            logger.error(f"ChatService.achat failed: {exc}")
+            raise
+
     def chat(self, question: str, deps: AgentDependencies) -> dict:
         """
         Run the agent and return the final response with performance metrics.
 
         The agent output is `str` — the model's natural-language response
         produced AFTER all tool calls have completed and results fed back.
+
+        NOTE: This sync version uses run_sync() and is safe to call from a
+        plain sync FastAPI route (Starlette runs those in its own threadpool
+        consistently per-request), but must NEVER be combined with
+        run_in_executor() from async code that also runs the agent — see
+        achat() docstring above for why. Prefer achat() for any new code.
 
         Args:
             question: The user's raw message.

@@ -349,7 +349,8 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
     """
     Streaming SSE version of /chat.
 
-    Runs the PydanticAI agent synchronously in a thread-pool (run_sync),
+    Calls the agent with `await agent.run(...)` directly in the same event
+    loop (no run_sync, no thread pool — see achat() docstring for why),
     then streams the final text token-by-token over SSE so the frontend
     can render characters as they arrive without waiting for the full response.
 
@@ -368,14 +369,12 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
 
         t_start = time.perf_counter()
         try:
-            # Run the agent in a thread so we don't block the async loop
-            loop = asyncio.get_event_loop()
-            result_dict = await loop.run_in_executor(
-                None,
-                lambda: chat_service.chat(
-                    question=chat_request.message,
-                    deps=agent_deps,
-                ),
+            # Call the agent directly with await — stays in the SAME event
+            # loop that owns the agent's httpx client. No threads, no
+            # run_in_executor, no cross-loop sharing of the async HTTP client.
+            result_dict = await chat_service.achat(
+                question=chat_request.message,
+                deps=agent_deps,
             )
 
             total_latency_ms = round((time.perf_counter() - t_start) * 1000, 2)

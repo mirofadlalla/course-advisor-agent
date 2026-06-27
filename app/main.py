@@ -5,7 +5,7 @@ RESPONSIBILITY: Application entry-point and dependency graph construction.
 This is the Composition Root — the ONE place where all objects are created
 and wired together. No other file calls constructors for services or repos.
 
-LIFESPAN FLOW (Chapter 9 of the RAG Pipeline plan):
+LIFESPAN FLOW:
     ┌─ Startup ────────────────────────────────────────────────────────────┐
     │  1.  Settings                  (already available as module-level)   │
     │  2.  EmbeddingProvider.get()   (lazy-loaded, cached singleton)       │
@@ -24,7 +24,8 @@ LIFESPAN FLOW (Chapter 9 of the RAG Pipeline plan):
     │  13. AgentDependencies         (typed container for all of the above)│
     │  14. ChatService               (creates Agent, registers tools)       │
     └──────────────────────────────────────────────────────────────────────┘
-    app.state stores: agent_dependencies, chat_service
+    app.state stores: agent_dependencies, chat_service, pipeline,
+                      storage_manager, index_node_count, last_build_time
     Every request reads from app.state — zero re-creation per request.
 
     ┌─ Shutdown ───────────────────────────────────────────────────────────┐
@@ -34,16 +35,21 @@ LIFESPAN FLOW (Chapter 9 of the RAG Pipeline plan):
 DESIGN DECISIONS:
     • NO global singletons except `settings` (needed by create_agent before DI).
     • ALL other objects flow through the lifespan context and app.state.
-    • The /chat endpoint is SYNCHRONOUS (run_sync). Upgrading to async streaming
-      only requires changing chat_service.chat() — endpoint stays the same.
+    • The /chat endpoint measures total wall-clock latency and writes to
+      MetricsStore after every request (success or failure).
     • /health returns 200 immediately — no dependency on the RAG pipeline.
       Load balancers and HuggingFace health checks use this endpoint.
+    • Static files served at /static; / redirects to the chat UI.
 """
 
 import logging
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.dependencies import AgentDependencies
@@ -65,6 +71,9 @@ from app.retrieval.retrieval_service import RetrievalService
 from app.schemas.api import ChatRequest, ChatResponse
 from app.services.chat_service import ChatService
 from app.vectorstores.vector_store_factory import VectorStoreFactory
+from app.monitoring.store import metrics_store
+from app.monitoring.router import router as monitoring_router
+from app.api.ingestion_router import router as ingestion_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,23 +96,17 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # ── Step 1: Embedding model ────────────────────────────────────────
-    # Lazy-loaded and cached. The 400MB BAAI/bge-m3 model is downloaded
-    # and cached on first call. Subsequent startups reuse the OS cache.
     logger.info(f"Step 1/9: Loading embedding model '{settings.embedding_model}'...")
     try:
         embed_model = EmbeddingProvider.get(settings)
         logger.info("Step 1/9: Embedding model ready.")
     except OSError as exc:
-        # Model files unavailable (no network / no cache).
-        # The /health endpoint must still respond 200; all other endpoints
-        # will fail gracefully because embed_model is None.
         logger.warning(f"Step 1/9: Embedding model unavailable: {exc}. RAG disabled.")
         embed_model = None  # type: ignore[assignment]
 
     # ── Steps 2-9: Full RAG pipeline (skipped when embed_model is unavailable) ──
     if embed_model is not None:
         # ── Step 2: Vector store ───────────────────────────────────────────
-        # Factory handles Simple / Chroma / Qdrant selection + auto-fallback.
         logger.info(
             f"Step 2/9: Creating vector store (backend='{settings.vector_store_backend}')..."
         )
@@ -122,7 +125,6 @@ async def lifespan(app: FastAPI):
         chunker = SemanticChunker(settings)
 
         # ── Step 4: Index builder ──────────────────────────────────────────
-        # Receives all components via DI — doesn't create them internally.
         index_builder = IndexBuilder(
             loader=loader,
             parser=parser,
@@ -138,7 +140,6 @@ async def lifespan(app: FastAPI):
         )
 
         # ── Step 6: Run ingestion pipeline ────────────────────────────────
-        # build-or-load: fast if persisted index exists, slow if building fresh.
         logger.info("Step 4/9: Running ingestion pipeline (build or load)...")
         pipeline = IngestionPipeline(index_builder, storage_manager)
         index, nodes = await pipeline.run()
@@ -174,10 +175,18 @@ async def lifespan(app: FastAPI):
 
         app.state.agent_dependencies = deps
         app.state.chat_service = chat_service
+        app.state.pipeline = pipeline
+        app.state.storage_manager = storage_manager
+        app.state.index_node_count = len(nodes)
+        app.state.last_build_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     else:
         logger.warning("RAG pipeline skipped — embedding model unavailable.")
         app.state.agent_dependencies = None
         app.state.chat_service = None
+        app.state.pipeline = None
+        app.state.storage_manager = None
+        app.state.index_node_count = 0
+        app.state.last_build_time = None
 
     logger.info("=" * 60)
     logger.info("Course Advisor Agent — Ready to serve requests")
@@ -196,6 +205,41 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── Static files ───────────────────────────────────────────────────────────
+_static_dir = Path(__file__).parent / "static"
+_static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+# ── Include routers ────────────────────────────────────────────────────────
+app.include_router(monitoring_router)
+app.include_router(ingestion_router)
+
+
+# ── Routes ────────────────────────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+def root():
+    """Redirect / to the Chat UI."""
+    index_path = _static_dir / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return RedirectResponse(url="/static/index.html")
+
+
+@app.get("/chat-ui", include_in_schema=False)
+def chat_ui():
+    return FileResponse(str(_static_dir / "index.html"))
+
+
+@app.get("/ingest-ui", include_in_schema=False)
+def ingest_ui():
+    return FileResponse(str(_static_dir / "ingest.html"))
+
+
+@app.get("/monitor-ui", include_in_schema=False)
+def monitor_ui():
+    return FileResponse(str(_static_dir / "monitor.html"))
+
 
 @app.get("/health")
 def health():
@@ -204,17 +248,81 @@ def health():
     Returns 200 immediately — does not depend on the RAG pipeline.
     Used by load balancers and HuggingFace Spaces health checks.
     """
-    return {"status": "ok", "app": settings.app_name}
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "rag_enabled": True,
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(chat_request: ChatRequest, request: Request):
     """
     Main chat endpoint.
-    Delegates entirely to ChatService — the endpoint knows nothing about
-    the agent, tools, or retrieval pipeline.
+    Delegates entirely to ChatService, instruments timing, writes to MetricsStore.
     """
-    return request.app.state.chat_service.chat(
-        question=chat_request.message,
-        deps=request.app.state.agent_dependencies,
-    )
+    chat_service = request.app.state.chat_service
+    agent_deps = request.app.state.agent_dependencies
+
+    if chat_service is None or agent_deps is None:
+        # Record the error
+        metrics_store.record_request(
+            question=chat_request.message,
+            total_latency_ms=0,
+            agent_process_ms=0,
+            tokens_in=0,
+            tokens_out=0,
+            success=False,
+            error_msg="RAG pipeline not initialized",
+            model=settings.model_name,
+        )
+        return ChatResponse(
+            response="⚠️ The RAG pipeline is not initialized. The system is starting up or the embedding model is unavailable.",
+            latency_ms=0,
+        )
+
+    t_start = time.perf_counter()
+    try:
+        result = chat_service.chat(
+            question=chat_request.message,
+            deps=agent_deps,
+        )
+        total_latency_ms = (time.perf_counter() - t_start) * 1000
+
+        request_id = metrics_store.record_request(
+            question=chat_request.message,
+            total_latency_ms=total_latency_ms,
+            agent_process_ms=result.get("agent_process_ms", 0),
+            tokens_in=result.get("tokens_in", 0),
+            tokens_out=result.get("tokens_out", 0),
+            success=True,
+            model=settings.model_name,
+        )
+
+        return ChatResponse(
+            response=result["response"],
+            latency_ms=round(total_latency_ms, 2),
+            agent_process_ms=result.get("agent_process_ms", 0),
+            tokens_in=result.get("tokens_in", 0),
+            tokens_out=result.get("tokens_out", 0),
+            cost_usd=result.get("cost_usd", 0.0),
+            request_id=request_id,
+        )
+
+    except Exception as exc:
+        total_latency_ms = (time.perf_counter() - t_start) * 1000
+        metrics_store.record_request(
+            question=chat_request.message,
+            total_latency_ms=total_latency_ms,
+            agent_process_ms=0,
+            tokens_in=0,
+            tokens_out=0,
+            success=False,
+            error_msg=str(exc),
+            model=settings.model_name,
+        )
+        logger.error(f"Chat endpoint error: {exc}")
+        return ChatResponse(
+            response=f"⚠️ An error occurred: {exc}",
+            latency_ms=round(total_latency_ms, 2),
+        )

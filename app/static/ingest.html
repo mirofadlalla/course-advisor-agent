@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Course Advisor — RAG Ingestion</title>
+  <meta name="description" content="Upload documents and manage the RAG knowledge base index." />
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .ingest-layout {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    .page-header {
+      margin-bottom: 36px;
+    }
+
+    .page-header h1 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      background: linear-gradient(135deg, var(--text-primary), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .page-header p {
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    /* ── Grid ────────────────────────────────────── */
+    .ingest-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+    }
+
+    @media (max-width: 720px) {
+      .ingest-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── Drop Zone ───────────────────────────────── */
+    .drop-zone {
+      border: 2px dashed var(--glass-border);
+      border-radius: var(--radius-xl);
+      padding: 56px 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--dur) var(--ease);
+      position: relative;
+      background: var(--glass-bg);
+    }
+
+    .drop-zone.dragover {
+      border-color: var(--primary);
+      background: rgba(108,99,255,0.08);
+      box-shadow: 0 0 0 4px rgba(108,99,255,0.12);
+    }
+
+    .drop-zone-icon {
+      font-size: 3rem;
+      margin-bottom: 16px;
+      display: block;
+      filter: drop-shadow(0 0 20px rgba(108,99,255,0.5));
+    }
+
+    .drop-zone h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .drop-zone p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .drop-zone .file-input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── File list ───────────────────────────────── */
+    .file-list {
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      transition: all var(--dur) var(--ease);
+    }
+
+    .file-item.uploading { border-color: rgba(108,99,255,0.4); }
+    .file-item.done      { border-color: rgba(16,185,129,0.4); }
+    .file-item.error     { border-color: rgba(239,68,68,0.4); }
+
+    .file-icon {
+      font-size: 1.5rem;
+      flex-shrink: 0;
+    }
+
+    .file-meta { flex: 1; min-width: 0; }
+
+    .file-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-size {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .file-progress {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+
+    .file-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      border-radius: 2px;
+      transition: width 0.3s var(--ease);
+    }
+
+    .remove-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      transition: color var(--dur) var(--ease);
+      flex-shrink: 0;
+    }
+
+    .remove-btn:hover { color: var(--error); }
+
+    /* ── Action buttons row ──────────────────────── */
+    .action-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    /* ── Sidebar cards ───────────────────────────── */
+    .side-card {
+      padding: 20px;
+      border-radius: var(--radius-lg);
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      margin-bottom: 16px;
+    }
+
+    .side-card-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 16px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat-row:last-child { border-bottom: none; }
+
+    .stat-label {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .stat-value {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Rebuild button ──────────────────────────── */
+    .rebuild-card {
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, rgba(108,99,255,0.08), rgba(167,139,250,0.06));
+      border: 1px solid rgba(108,99,255,0.2);
+      margin-bottom: 16px;
+      text-align: center;
+    }
+
+    .rebuild-icon {
+      font-size: 2rem;
+      margin-bottom: 10px;
+    }
+
+    /* ── Events log ──────────────────────────────── */
+    .events-log {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .event-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+    }
+
+    .event-item:last-child { border-bottom: none; }
+
+    .event-icon { flex-shrink: 0; font-size: 1rem; }
+
+    .event-text { flex: 1; color: var(--text-secondary); }
+
+    .event-time {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Allowed ext chips ───────────────────────── */
+    .ext-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .ext-chip {
+      padding: 3px 10px;
+      background: var(--glass-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-full);
+      font-size: 0.72rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--primary-light);
+    }
+
+    /* ── Rebuild progress ────────────────────────── */
+    .rebuild-progress {
+      display: none;
+      margin-top: 14px;
+    }
+
+    .rebuild-progress.visible { display: block; }
+
+    .rebuild-bar-track {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .rebuild-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      border-radius: 2px;
+      animation: indeterminate 1.5s infinite;
+      width: 40%;
+    }
+
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ───────────────────────────────────── -->
+<nav class="nav">
+  <a href="/" class="nav-brand">
+    <div class="nav-logo">🎓</div>
+    <div>
+      <div class="nav-title">Course Advisor</div>
+      <div class="nav-subtitle">AI-powered RAG Agent</div>
+    </div>
+  </a>
+  <div class="nav-links">
+    <a href="/" class="nav-link">💬 Chat</a>
+    <a href="/ingest-ui" class="nav-link active">📂 Ingest</a>
+    <a href="/monitor-ui" class="nav-link">📊 Monitor</a>
+  </div>
+</nav>
+
+<!-- ── Page ─────────────────────────────────────────── -->
+<div class="page">
+  <div class="ingest-layout">
+
+    <div class="page-header">
+      <h1>📂 RAG Knowledge Base</h1>
+      <p>Upload documents to expand the knowledge base and rebuild the vector index.</p>
+    </div>
+
+    <div class="ingest-grid">
+
+      <!-- Left column -->
+      <div>
+        <!-- Drop zone -->
+        <div class="drop-zone" id="drop-zone">
+          <input type="file" class="file-input" id="file-input"
+                 multiple accept=".md,.txt,.json" />
+          <span class="drop-zone-icon">📁</span>
+          <h2>Drop files here</h2>
+          <p>or click to browse your computer</p>
+          <div class="ext-chips" style="justify-content:center;margin-top:12px;">
+            <span class="ext-chip">.md</span>
+            <span class="ext-chip">.txt</span>
+            <span class="ext-chip">.json</span>
+          </div>
+          <p style="margin-top:12px;font-size:0.72rem;">Max 50 MB per file</p>
+        </div>
+
+        <!-- File list -->
+        <div class="file-list" id="file-list"></div>
+
+        <!-- Actions -->
+        <div class="action-row" id="action-row" style="display:none;">
+          <button class="btn btn-primary" id="btn-upload-all">
+            ⬆ Upload All Files
+          </button>
+          <button class="btn btn-secondary" id="btn-clear-list">
+            ✕ Clear
+          </button>
+        </div>
+      </div>
+
+      <!-- Right sidebar -->
+      <div>
+
+        <!-- Index status -->
+        <div class="side-card" id="status-card">
+          <div class="side-card-title">📊 Index Status</div>
+          <div class="stat-row">
+            <span class="stat-label">Status</span>
+            <span class="stat-value" id="idx-status">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Nodes</span>
+            <span class="stat-value" id="idx-nodes">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Last Build</span>
+            <span class="stat-value" id="idx-last-build">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">RAG Enabled</span>
+            <span class="stat-value" id="idx-rag">—</span>
+          </div>
+        </div>
+
+        <!-- Rebuild card -->
+        <div class="rebuild-card">
+          <div class="rebuild-icon">🔄</div>
+          <div style="font-weight:700;margin-bottom:4px;">Rebuild Index</div>
+          <div class="text-xs text-muted" style="margin-bottom:16px;">
+            Re-embed all documents from the data directory into the vector store.
+          </div>
+          <button class="btn btn-primary w-full" id="btn-rebuild">
+            ⚡ Rebuild Index
+          </button>
+          <div class="rebuild-progress" id="rebuild-progress">
+            <div class="text-xs text-muted" style="margin-top:12px;">Rebuilding index…</div>
+            <div class="rebuild-bar-track"><div class="rebuild-bar-fill"></div></div>
+          </div>
+        </div>
+
+        <!-- Danger zone -->
+        <div class="side-card">
+          <div class="side-card-title">⚠️ Danger Zone</div>
+          <p class="text-xs text-muted" style="margin-bottom:12px;">
+            Delete the persisted index from disk. The index will be rebuilt on next startup or when you click Rebuild.
+          </p>
+          <button class="btn btn-danger btn-sm w-full" id="btn-delete-index">
+            🗑 Delete Index
+          </button>
+        </div>
+
+        <!-- Events log -->
+        <div class="side-card">
+          <div class="side-card-title">📋 Recent Events</div>
+          <div class="events-log" id="events-log">
+            <div class="text-xs text-muted">No events yet.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+/* ══════════════════════════════════════════════════
+   Ingest UI — vanilla JS
+   ══════════════════════════════════════════════════ */
+
+const $ = id => document.getElementById(id);
+
+// ── State ──────────────────────────────────────────
+let pendingFiles = []; // File objects waiting to be uploaded
+let statusInterval = null;
+
+// ── DOM ────────────────────────────────────────────
+const dropZone     = $('drop-zone');
+const fileInput    = $('file-input');
+const fileList     = $('file-list');
+const actionRow    = $('action-row');
+const btnUploadAll = $('btn-upload-all');
+const btnClearList = $('btn-clear-list');
+const btnRebuild   = $('btn-rebuild');
+const btnDelete    = $('btn-delete-index');
+const eventsLog    = $('events-log');
+const rebuildProg  = $('rebuild-progress');
+
+// ── Drop zone ──────────────────────────────────────
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  addFiles([...e.dataTransfer.files]);
+});
+
+fileInput.addEventListener('change', () => {
+  addFiles([...fileInput.files]);
+  fileInput.value = '';
+});
+
+function addFiles(files) {
+  const allowed = ['.md', '.txt', '.json'];
+  files.forEach(f => {
+    const ext = '.' + f.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+      toast(`${f.name} — unsupported type (${ext})`, 'error');
+      return;
+    }
+    if (f.size > 50 * 1024 * 1024) {
+      toast(`${f.name} exceeds 50 MB limit`, 'error');
+      return;
+    }
+    if (pendingFiles.find(p => p.name === f.name)) return; // dedupe
+    pendingFiles.push(f);
+  });
+  renderFileList();
+}
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  if (pendingFiles.length === 0) {
+    actionRow.style.display = 'none';
+    return;
+  }
+  actionRow.style.display = 'flex';
+
+  pendingFiles.forEach((f, i) => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    const icon = ext === 'json' ? '📋' : ext === 'md' ? '📝' : '📄';
+    const el = document.createElement('div');
+    el.className = 'file-item';
+    el.id = `file-item-${i}`;
+    el.innerHTML = `
+      <span class="file-icon">${icon}</span>
+      <div class="file-meta">
+        <div class="file-name">${escHtml(f.name)}</div>
+        <div class="file-size">${formatBytes(f.size)} · .${ext}</div>
+        <div class="file-progress" style="display:none" id="prog-${i}">
+          <div class="file-progress-bar" id="prog-bar-${i}" style="width:0%"></div>
+        </div>
+      </div>
+      <button class="remove-btn" onclick="removeFile(${i})" title="Remove">✕</button>`;
+    fileList.appendChild(el);
+  });
+}
+
+function removeFile(i) {
+  pendingFiles.splice(i, 1);
+  renderFileList();
+}
+
+// ── Upload all ─────────────────────────────────────
+btnUploadAll.addEventListener('click', async () => {
+  if (pendingFiles.length === 0) return;
+
+  btnUploadAll.disabled = true;
+  btnUploadAll.textContent = '⬆ Uploading…';
+
+  let succeeded = 0;
+  let failed = 0;
+
+  for (let i = 0; i < pendingFiles.length; i++) {
+    const f = pendingFiles[i];
+    const item = $(`file-item-${i}`);
+    const prog = $(`prog-${i}`);
+    const progBar = $(`prog-bar-${i}`);
+
+    item.classList.add('uploading');
+    prog.style.display = 'block';
+    progBar.style.width = '30%';
+
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+
+      const res = await fetch('/ingest/upload', { method: 'POST', body: fd });
+      progBar.style.width = '100%';
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || res.statusText);
+      }
+
+      item.classList.remove('uploading');
+      item.classList.add('done');
+      addEvent('upload', `📤 ${f.name} uploaded`, true);
+      succeeded++;
+
+    } catch (err) {
+      item.classList.remove('uploading');
+      item.classList.add('error');
+      addEvent('upload', `❌ ${f.name}: ${err.message}`, false);
+      failed++;
+      toast(`Upload failed: ${f.name}`, 'error');
+    }
+  }
+
+  btnUploadAll.textContent = `✓ Done (${succeeded} uploaded)`;
+  setTimeout(() => {
+    pendingFiles = [];
+    renderFileList();
+    btnUploadAll.disabled = false;
+    btnUploadAll.textContent = '⬆ Upload All Files';
+  }, 2500);
+
+  if (succeeded > 0) {
+    toast(`${succeeded} file(s) uploaded. Click Rebuild to update the index.`, 'success');
+  }
+});
+
+btnClearList.addEventListener('click', () => {
+  pendingFiles = [];
+  renderFileList();
+});
+
+// ── Rebuild ────────────────────────────────────────
+btnRebuild.addEventListener('click', async () => {
+  const confirmed = confirm('Start a full index rebuild? This may take several minutes.');
+  if (!confirmed) return;
+
+  btnRebuild.disabled = true;
+  btnRebuild.textContent = '⏳ Starting rebuild…';
+  rebuildProg.classList.add('visible');
+
+  try {
+    const res = await fetch('/ingest/rebuild', { method: 'POST' });
+    const data = await res.json();
+
+    if (res.status === 409) {
+      toast('A rebuild is already in progress!', 'warning');
+      return;
+    }
+
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+
+    toast('Rebuild started in background. Status updates below.', 'info');
+    addEvent('rebuild', '🔄 Index rebuild started…', true);
+    btnRebuild.textContent = '⏳ Rebuilding…';
+
+    // Poll status
+    pollRebuildStatus();
+
+  } catch (err) {
+    toast('Rebuild failed: ' + err.message, 'error');
+    addEvent('rebuild', '❌ Rebuild failed: ' + err.message, false);
+    resetRebuildBtn();
+  }
+});
+
+function pollRebuildStatus() {
+  if (statusInterval) clearInterval(statusInterval);
+
+  statusInterval = setInterval(async () => {
+    try {
+      const res = await fetch('/ingest/status');
+      const data = await res.json();
+      renderStatus(data);
+
+      if (!data.rebuild_in_progress) {
+        clearInterval(statusInterval);
+        statusInterval = null;
+        resetRebuildBtn();
+        rebuildProg.classList.remove('visible');
+
+        const info = data.last_rebuild_info || {};
+        if (info.status === 'completed') {
+          addEvent('rebuild', `✅ Rebuild done: ${info.node_count} nodes in ${info.duration_ms?.toFixed(0)}ms`, true);
+          toast(`Rebuild complete! ${info.node_count} nodes indexed.`, 'success');
+        } else if (info.status === 'failed') {
+          addEvent('rebuild', `❌ Rebuild failed: ${info.error}`, false);
+          toast('Rebuild failed: ' + info.error, 'error');
+        }
+      }
+    } catch (e) { /* ignore transient errors */ }
+  }, 3000);
+}
+
+function resetRebuildBtn() {
+  btnRebuild.disabled = false;
+  btnRebuild.textContent = '⚡ Rebuild Index';
+}
+
+// ── Delete index ───────────────────────────────────
+btnDelete.addEventListener('click', async () => {
+  const confirmed = confirm('Delete the persisted index? You will need to rebuild to use RAG.');
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch('/ingest/index', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    toast('Index deleted.', 'info');
+    addEvent('delete', '🗑 Index deleted from disk', true);
+    loadStatus();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
+});
+
+// ── Status ─────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const res = await fetch('/ingest/status');
+    const data = await res.json();
+    renderStatus(data);
+
+    // Load events from metrics
+    const mres = await fetch('/metrics/summary');
+    const mdata = await mres.json();
+    const events = (mdata.ingest_events || []).reverse();
+    if (events.length > 0) {
+      eventsLog.innerHTML = '';
+      events.forEach(e => {
+        addEventEl(e.action, getEventText(e), e.success, e.timestamp);
+      });
+    }
+  } catch (e) {
+    console.warn('Status load failed:', e);
+  }
+}
+
+function getEventText(e) {
+  if (e.action === 'upload')  return `📤 ${e.filename || 'file'} uploaded`;
+  if (e.action === 'rebuild') {
+    if (e.success) return `✅ Rebuild: ${e.node_count_after} nodes (${e.duration_ms?.toFixed(0)}ms)`;
+    return `❌ Rebuild failed: ${e.error_msg}`;
+  }
+  if (e.action === 'delete')  return '🗑 Index deleted';
+  return e.action;
+}
+
+function renderStatus(data) {
+  $('idx-status').innerHTML = data.index_exists
+    ? '<span class="badge badge-success">✓ Ready</span>'
+    : '<span class="badge badge-warning">⚠ Not built</span>';
+
+  $('idx-nodes').textContent = data.node_count?.toLocaleString() ?? '0';
+  $('idx-last-build').textContent = data.last_build_time
+    ? new Date(data.last_build_time).toLocaleString()
+    : 'Never';
+  $('idx-rag').innerHTML = data.rag_enabled
+    ? '<span class="badge badge-success">Enabled</span>'
+    : '<span class="badge badge-error">Disabled</span>';
+}
+
+// ── Events log ─────────────────────────────────────
+function addEvent(action, text, success, ts) {
+  if (eventsLog.querySelector('.text-xs.text-muted')) eventsLog.innerHTML = '';
+  addEventEl(action, text, success, ts || new Date().toISOString());
+}
+
+function addEventEl(action, text, success, ts) {
+  const el = document.createElement('div');
+  el.className = 'event-item';
+  el.innerHTML = `
+    <span class="event-icon">${success ? '✅' : '❌'}</span>
+    <span class="event-text">${escHtml(text)}</span>
+    <span class="event-time">${relTime(ts)}</span>`;
+  eventsLog.insertBefore(el, eventsLog.firstChild);
+}
+
+// ── Helpers ────────────────────────────────────────
+function formatBytes(b) {
+  if (b < 1024)       return b + ' B';
+  if (b < 1048576)    return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function relTime(iso) {
+  try {
+    const d = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (d < 60) return 'just now';
+    if (d < 3600) return Math.floor(d/60) + 'm ago';
+    return Math.floor(d/3600) + 'h ago';
+  } catch { return ''; }
+}
+
+function toast(msg, type = 'info') {
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+  t.innerHTML = icon + ' ' + escHtml(msg);
+  $('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 4500);
+}
+
+// ── Init ───────────────────────────────────────────
+loadStatus();
+setInterval(loadStatus, 15000);
+</script>
+
+</body>
+</html>

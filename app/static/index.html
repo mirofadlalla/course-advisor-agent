@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Course Advisor — Chat</title>
+  <meta name="description" content="Chat with the Course Advisor AI agent powered by RAG and Groq LLM." />
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* ── Chat layout ─────────────────────────────────── */
+    .chat-layout {
+      display: flex;
+      height: calc(100vh - var(--nav-h));
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────── */
+    .sidebar {
+      width: var(--sidebar-w);
+      border-right: 1px solid var(--border);
+      background: rgba(13, 18, 32, 0.6);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 20px 16px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 10px;
+    }
+
+    .session-item {
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all var(--dur) var(--ease);
+      border: 1px solid transparent;
+      margin-bottom: 4px;
+    }
+
+    .session-item:hover,
+    .session-item.active {
+      background: var(--glass-bg);
+      border-color: var(--glass-border);
+    }
+
+    .session-item.active {
+      border-color: rgba(108,99,255,0.3);
+      background: rgba(108,99,255,0.08);
+    }
+
+    .session-preview {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .session-time {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .sidebar-footer {
+      padding: 14px 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Main chat area ───────────────────────────────── */
+    .chat-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 0;
+      scroll-behavior: smooth;
+    }
+
+    .messages-inner {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ── Message bubble ───────────────────────────────── */
+    .msg {
+      display: flex;
+      gap: 12px;
+      animation: msg-in 0.25s var(--ease);
+    }
+
+    @keyframes msg-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      margin-top: 4px;
+    }
+
+    .msg-avatar.user-avatar {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+    }
+
+    .msg-avatar.agent-avatar {
+      background: linear-gradient(135deg, var(--accent), #0ea5e9);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .msg-content {
+      flex: 1;
+      max-width: calc(100% - 46px);
+    }
+
+    .msg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .msg-author {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .msg-ts {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .msg-body {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 4px 16px 16px 16px;
+      padding: 14px 18px;
+      font-size: 0.9rem;
+      line-height: 1.75;
+      color: var(--text-primary);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .msg-body {
+      background: rgba(108, 99, 255, 0.1);
+      border-color: rgba(108, 99, 255, 0.2);
+      border-radius: 16px 4px 16px 16px;
+    }
+
+    .msg-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    .msg-stat {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      transition: color var(--dur) var(--ease);
+    }
+
+    .copy-btn:hover { color: var(--text-primary); }
+
+    /* ── Typing indicator ─────────────────────────────── */
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 14px 18px;
+      align-items: center;
+    }
+
+    .typing-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      animation: bounce 1.2s infinite;
+    }
+
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30%            { transform: translateY(-6px); opacity: 1; }
+    }
+
+    /* ── Input bar ────────────────────────────────────── */
+    .chat-inputbar {
+      padding: 16px 24px 20px;
+      border-top: 1px solid var(--border);
+      background: rgba(13,18,32,0.7);
+      backdrop-filter: blur(12px);
+    }
+
+    .inputbar-inner {
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    .chat-textarea {
+      flex: 1;
+      resize: none;
+      min-height: 48px;
+      max-height: 180px;
+      padding: 12px 16px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      color: var(--text-primary);
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.9rem;
+      outline: none;
+      line-height: 1.5;
+      transition: border-color var(--dur) var(--ease),
+                  box-shadow var(--dur) var(--ease);
+      overflow-y: auto;
+    }
+
+    .chat-textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(108,99,255,0.15);
+    }
+
+    .chat-textarea::placeholder { color: var(--text-muted); }
+
+    .send-btn {
+      width: 48px; height: 48px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 20px;
+      transition: all var(--dur) var(--ease);
+      box-shadow: 0 4px 12px var(--primary-glow);
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px var(--primary-glow);
+    }
+
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Status bar ───────────────────────────────────── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 10px;
+      padding: 0 2px;
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .model-badge {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* ── Welcome screen ───────────────────────────────── */
+    .welcome {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      text-align: center;
+      padding: 40px;
+      animation: fade-in 0.5s var(--ease);
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .welcome-logo {
+      width: 72px; height: 72px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: var(--radius-xl);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      margin-bottom: 24px;
+      box-shadow: 0 0 40px var(--primary-glow);
+      animation: float 4s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-8px); }
+    }
+
+    .welcome h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      background: linear-gradient(135deg, var(--text-primary), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 10px;
+    }
+
+    .welcome p {
+      color: var(--text-secondary);
+      font-size: 1rem;
+      max-width: 420px;
+      line-height: 1.7;
+      margin-bottom: 32px;
+    }
+
+    .suggestion-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      max-width: 520px;
+      width: 100%;
+    }
+
+    .suggestion {
+      padding: 14px 16px;
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      background: var(--glass-bg);
+      cursor: pointer;
+      text-align: left;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      transition: all var(--dur) var(--ease);
+    }
+
+    .suggestion:hover {
+      border-color: rgba(108,99,255,0.4);
+      color: var(--text-primary);
+      background: rgba(108,99,255,0.08);
+      transform: translateY(-1px);
+    }
+
+    .suggestion-icon {
+      font-size: 1.1rem;
+      margin-bottom: 4px;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ───────────────────────────────────── -->
+<nav class="nav">
+  <a href="/" class="nav-brand">
+    <div class="nav-logo">🎓</div>
+    <div>
+      <div class="nav-title">Course Advisor</div>
+      <div class="nav-subtitle">AI-powered RAG Agent</div>
+    </div>
+  </a>
+  <div class="nav-links">
+    <a href="/" class="nav-link active">💬 Chat</a>
+    <a href="/ingest-ui" class="nav-link">📂 Ingest</a>
+    <a href="/monitor-ui" class="nav-link">📊 Monitor</a>
+  </div>
+</nav>
+
+<!-- ── Page ─────────────────────────────────────────── -->
+<div class="page">
+  <div class="chat-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <button class="btn btn-primary w-full" id="btn-new-chat">
+          ✦ New Chat
+        </button>
+      </div>
+
+      <div class="sidebar-body" id="session-list">
+        <!-- populated by JS -->
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="text-xs text-muted" style="display:flex;align-items:center;gap:6px;">
+          <span class="dot dot-success dot-pulse"></span>
+          <span id="model-name-footer">llama-3.3-70b-versatile · Groq</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="chat-main">
+      <div class="chat-messages" id="chat-messages">
+        <div class="messages-inner" id="messages-inner">
+          <!-- Welcome screen -->
+          <div class="welcome" id="welcome-screen">
+            <div class="welcome-logo">🤖</div>
+            <h1>Course Advisor Agent</h1>
+            <p>Ask me anything about courses, learning roadmaps, or career paths. I use RAG to search the knowledge base for accurate answers.</p>
+            <div class="suggestion-grid">
+              <button class="suggestion" onclick="useSuggestion(this)">
+                <span class="suggestion-icon">🎯</span>
+                What courses are best for beginners in cybersecurity?
+              </button>
+              <button class="suggestion" onclick="useSuggestion(this)">
+                <span class="suggestion-icon">🗺️</span>
+                Show me the learning roadmap for data science
+              </button>
+              <button class="suggestion" onclick="useSuggestion(this)">
+                <span class="suggestion-icon">⚡</span>
+                Which courses are available in Arabic?
+              </button>
+              <button class="suggestion" onclick="useSuggestion(this)">
+                <span class="suggestion-icon">💼</span>
+                What track should I take for a career in DevOps?
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input bar -->
+      <div class="chat-inputbar">
+        <div class="inputbar-inner">
+          <div class="input-row">
+            <textarea
+              id="chat-input"
+              class="chat-textarea"
+              placeholder="Ask about courses, roadmaps, or career paths…"
+              rows="1"
+            ></textarea>
+            <button class="send-btn" id="send-btn" title="Send (Enter)">
+              ➤
+            </button>
+          </div>
+          <div class="status-bar">
+            <div class="status-left">
+              <span class="model-badge">🤖 <span id="active-model">llama-3.3-70b-versatile</span></span>
+              <span class="model-badge" id="last-stats" style="display:none;">
+                ⏱ <span id="last-latency">–</span>ms &nbsp;|&nbsp; 🪙 <span id="last-tokens">–</span> tokens
+              </span>
+            </div>
+            <div class="text-xs text-muted">Enter to send · Shift+Enter for newline</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+/* ══════════════════════════════════════════════════
+   Chat UI — vanilla JS
+   ══════════════════════════════════════════════════ */
+
+const $ = id => document.getElementById(id);
+
+// ── State ──────────────────────────────────────────
+const state = {
+  sessions: JSON.parse(localStorage.getItem('ca_sessions') || '[]'),
+  activeIdx: -1,
+  loading: false,
+};
+
+// ── DOM refs ───────────────────────────────────────
+const messagesInner  = $('messages-inner');
+const chatInput      = $('chat-input');
+const sendBtn        = $('send-btn');
+const sessionList    = $('session-list');
+const welcomeScreen  = $('welcome-screen');
+const lastStats      = $('last-stats');
+const lastLatency    = $('last-latency');
+const lastTokens     = $('last-tokens');
+
+// ── Sessions ───────────────────────────────────────
+function saveState() {
+  localStorage.setItem('ca_sessions', JSON.stringify(state.sessions));
+}
+
+function createSession() {
+  const s = {
+    id: crypto.randomUUID(),
+    messages: [],
+    createdAt: new Date().toISOString(),
+    preview: 'New conversation',
+  };
+  state.sessions.unshift(s);
+  state.activeIdx = 0;
+  saveState();
+  renderSessions();
+  renderMessages();
+}
+
+function switchSession(idx) {
+  state.activeIdx = idx;
+  renderSessions();
+  renderMessages();
+}
+
+function renderSessions() {
+  sessionList.innerHTML = '';
+  if (state.sessions.length === 0) {
+    sessionList.innerHTML = '<p class="text-xs text-muted" style="padding:12px 8px;">No conversations yet.</p>';
+    return;
+  }
+  state.sessions.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'session-item' + (i === state.activeIdx ? ' active' : '');
+    el.innerHTML = `
+      <div class="session-preview">${escHtml(s.preview)}</div>
+      <div class="session-time">${relTime(s.createdAt)}</div>`;
+    el.onclick = () => switchSession(i);
+    sessionList.appendChild(el);
+  });
+}
+
+// ── Messages ───────────────────────────────────────
+function getSession() {
+  return state.activeIdx >= 0 ? state.sessions[state.activeIdx] : null;
+}
+
+function renderMessages() {
+  const s = getSession();
+  // Clear dynamic messages (keep welcome if needed)
+  messagesInner.innerHTML = '';
+
+  if (!s || s.messages.length === 0) {
+    messagesInner.appendChild(welcomeEl());
+    return;
+  }
+
+  s.messages.forEach(m => {
+    messagesInner.appendChild(buildBubble(m));
+  });
+
+  scrollToBottom();
+}
+
+function welcomeEl() {
+  const d = document.createElement('div');
+  d.id = 'welcome-screen';
+  d.className = 'welcome';
+  d.innerHTML = `
+    <div class="welcome-logo">🤖</div>
+    <h1>Course Advisor Agent</h1>
+    <p>Ask me anything about courses, learning roadmaps, or career paths. I use RAG to search the knowledge base for accurate answers.</p>
+    <div class="suggestion-grid">
+      <button class="suggestion" onclick="useSuggestion(this)"><span class="suggestion-icon">🎯</span>What courses are best for beginners in cybersecurity?</button>
+      <button class="suggestion" onclick="useSuggestion(this)"><span class="suggestion-icon">🗺️</span>Show me the learning roadmap for data science</button>
+      <button class="suggestion" onclick="useSuggestion(this)"><span class="suggestion-icon">⚡</span>Which courses are available in Arabic?</button>
+      <button class="suggestion" onclick="useSuggestion(this)"><span class="suggestion-icon">💼</span>What track should I take for a career in DevOps?</button>
+    </div>`;
+  return d;
+}
+
+function buildBubble(m) {
+  const isUser = m.role === 'user';
+  const div = document.createElement('div');
+  div.className = 'msg' + (isUser ? ' user' : '');
+  div.innerHTML = `
+    <div class="msg-avatar ${isUser ? 'user-avatar' : 'agent-avatar'}">${isUser ? '👤' : '🤖'}</div>
+    <div class="msg-content">
+      <div class="msg-header">
+        <span class="msg-author">${isUser ? 'You' : 'Course Advisor'}</span>
+        <span class="msg-ts">${formatTime(m.ts)}</span>
+      </div>
+      <div class="msg-body">${renderMarkdown(escHtml(m.content))}</div>
+      <div class="msg-footer">
+        ${!isUser && m.latency ? `<span class="msg-stat">⏱ ${m.latency}ms</span>` : ''}
+        ${!isUser && m.tokens  ? `<span class="msg-stat">🪙 ${m.tokens} tokens</span>` : ''}
+        ${!isUser && m.cost    ? `<span class="msg-stat">💲 $${m.cost}</span>` : ''}
+        <button class="copy-btn" onclick="copyMsg(this)" data-text="${escAttr(m.content)}">⧉ Copy</button>
+      </div>
+    </div>`;
+  return div;
+}
+
+function addTypingIndicator() {
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.id = 'typing-indicator';
+  div.innerHTML = `
+    <div class="msg-avatar agent-avatar">🤖</div>
+    <div class="msg-content">
+      <div class="msg-header">
+        <span class="msg-author">Course Advisor</span>
+        <span class="msg-ts">thinking…</span>
+      </div>
+      <div class="msg-body">
+        <div class="typing-indicator">
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+        </div>
+      </div>
+    </div>`;
+  messagesInner.appendChild(div);
+  scrollToBottom();
+}
+
+function removeTypingIndicator() {
+  const el = $('typing-indicator');
+  if (el) el.remove();
+}
+
+// ── Send ───────────────────────────────────────────
+async function sendMessage() {
+  const text = chatInput.value.trim();
+  if (!text || state.loading) return;
+
+  // Ensure we have an active session
+  if (state.activeIdx < 0) createSession();
+
+  const s = getSession();
+  const userMsg = { role: 'user', content: text, ts: new Date().toISOString() };
+  s.messages.push(userMsg);
+
+  if (s.messages.length === 1) {
+    s.preview = text.slice(0, 50) + (text.length > 50 ? '…' : '');
+  }
+
+  saveState();
+  renderSessions();
+
+  // Clear input
+  chatInput.value = '';
+  autoResize();
+
+  // Show user bubble + typing indicator
+  if (messagesInner.querySelector('#welcome-screen')) {
+    messagesInner.innerHTML = '';
+  }
+  messagesInner.appendChild(buildBubble(userMsg));
+  addTypingIndicator();
+  scrollToBottom();
+
+  state.loading = true;
+  sendBtn.disabled = true;
+
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        session_id: s.id,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+
+    const agentMsg = {
+      role: 'agent',
+      content: data.response,
+      ts: new Date().toISOString(),
+      latency: data.latency_ms,
+      tokens: data.tokens_in + data.tokens_out,
+      cost: data.cost_usd?.toFixed(6),
+      requestId: data.request_id,
+    };
+
+    s.messages.push(agentMsg);
+    saveState();
+
+    removeTypingIndicator();
+    messagesInner.appendChild(buildBubble(agentMsg));
+    scrollToBottom();
+
+    // Update status bar
+    lastStats.style.display = 'flex';
+    lastLatency.textContent = data.latency_ms?.toFixed(0) ?? '–';
+    lastTokens.textContent  = (data.tokens_in + data.tokens_out) || '–';
+
+  } catch (err) {
+    removeTypingIndicator();
+    const errMsg = { role: 'agent', content: `⚠️ Error: ${err.message}`, ts: new Date().toISOString() };
+    s.messages.push(errMsg);
+    saveState();
+    messagesInner.appendChild(buildBubble(errMsg));
+    scrollToBottom();
+    toast('Request failed: ' + err.message, 'error');
+  } finally {
+    state.loading = false;
+    sendBtn.disabled = false;
+    chatInput.focus();
+  }
+}
+
+// ── Suggestions ────────────────────────────────────
+function useSuggestion(el) {
+  const text = el.innerText.trim();
+  chatInput.value = text;
+  autoResize();
+  chatInput.focus();
+  sendMessage();
+}
+
+// ── Helpers ────────────────────────────────────────
+function scrollToBottom() {
+  const container = $('chat-messages');
+  setTimeout(() => {
+    container.scrollTop = container.scrollHeight;
+  }, 50);
+}
+
+function autoResize() {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + 'px';
+}
+
+function copyMsg(btn) {
+  navigator.clipboard.writeText(btn.dataset.text).then(() => {
+    btn.textContent = '✓ Copied';
+    setTimeout(() => btn.textContent = '⧉ Copy', 1500);
+  });
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function escAttr(str) {
+  return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderMarkdown(html) {
+  // Very simple markdown: bold, italic, code, headers, line breaks
+  return html
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:1px 5px;border-radius:4px;font-family:JetBrains Mono,monospace;font-size:0.85em;">$1</code>')
+    .replace(/^### (.+)$/gm, '<strong style="font-size:0.95em;display:block;margin-top:8px;">$1</strong>')
+    .replace(/^## (.+)$/gm, '<strong style="font-size:1.05em;display:block;margin-top:10px;">$1</strong>')
+    .replace(/^# (.+)$/gm, '<strong style="font-size:1.1em;display:block;margin-top:10px;">$1</strong>')
+    .replace(/^- (.+)$/gm, '• $1')
+    .replace(/\n/g, '<br>');
+}
+
+function formatTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
+}
+
+function relTime(iso) {
+  try {
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60)    return 'just now';
+    if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  } catch { return ''; }
+}
+
+function toast(msg, type = 'info') {
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.innerHTML = (type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️') + ' ' + escHtml(msg);
+  $('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// ── Event bindings ─────────────────────────────────
+$('btn-new-chat').addEventListener('click', createSession);
+
+sendBtn.addEventListener('click', sendMessage);
+
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+chatInput.addEventListener('input', autoResize);
+
+// ── Init ───────────────────────────────────────────
+(function init() {
+  if (state.sessions.length > 0) {
+    state.activeIdx = 0;
+  } else {
+    createSession();
+    return;
+  }
+  renderSessions();
+  renderMessages();
+})();
+</script>
+
+</body>
+</html>

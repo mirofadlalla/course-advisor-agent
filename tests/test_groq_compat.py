@@ -20,9 +20,9 @@ class TestParseXmlToolCall:
                 {"course_name": "HTML"},
             ),
             (
-                '<function=search_knowledge {"query": "cybersecurity courses"} </function>',
+                '<function=search_knowledge {"query": "HTML course"}></function>',
                 "search_knowledge",
-                {"query": "cybersecurity courses"},
+                {"query": "HTML course"},
             ),
         ],
     )

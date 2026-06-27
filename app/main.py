@@ -338,9 +338,8 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
     """
     Streaming SSE version of /chat.
 
-    Uses PydanticAI run_stream_events() for native LLM token streaming via
-    PartDeltaEvent. Tool calls use agent.run() (non-streaming) so groq_compat
-    can recover malformed tool-call XML.
+    Uses hybrid agent.iter(): non-streaming Groq for tool selection (groq_compat),
+    native token streaming only for the final answer turn.
 
     SSE event format:
         data: {"type": "status", "text": "Searching knowledge base..."}

@@ -28,7 +28,12 @@ _XML_JSON_RE = re.compile(
     r"^<function=([^\s{>(]+)\s*(\{.*?\})\s*(?:</function>)?\s*$",
     re.DOTALL,
 )
-# 2) <function=name({"key": "val"})</function>
+# 2) <function=name {"key": "val"}></function>  (stray ">" before close tag)
+_XML_JSON_GT_CLOSE_RE = re.compile(
+    r"^<function=([^\s{>(]+)\s*(\{.*?\})\s*>\s*(?:</function>)?\s*$",
+    re.DOTALL,
+)
+# 3) <function=name({"key": "val"})</function>
 _XML_PARENS_RE = re.compile(
     r"^<function=([^(<]+)\((\{.*?\})\)\s*(?:</function>)?\s*$",
     re.DOTALL,
@@ -47,7 +52,7 @@ def parse_xml_tool_call(failed_generation: str) -> tuple[str, dict[str, Any]] | 
     if not text.startswith("<function="):
         return None
 
-    for pattern in (_XML_JSON_RE, _XML_PARENS_RE):
+    for pattern in (_XML_JSON_RE, _XML_JSON_GT_CLOSE_RE, _XML_PARENS_RE):
         match = pattern.match(text)
         if not match:
             continue

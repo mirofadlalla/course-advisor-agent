@@ -68,6 +68,10 @@ class BM25Retriever(BaseRetriever):
 
     def _build_retriever(self, nodes: list[BaseNode]):
         """Build BM25 index from nodes. Runs at startup (once)."""
+        if not nodes:
+            logger.warning("BM25Retriever: no nodes provided, retriever disabled.")
+            return None
+
         try:
             from llama_index.retrievers.bm25 import BM25Retriever as LlamaBM25
 

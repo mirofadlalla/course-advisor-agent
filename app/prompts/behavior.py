@@ -7,6 +7,8 @@ you have received the tool's result.
 Never explain what you are about to do.
 Never write a plan before calling a tool.
 Never call final_result before calling the relevant tool.
+Never output tool calls as text, XML, or markdown — invoke tools through the
+API only (do not write strings like <function=...>).
 Call the tool immediately, then use its result to write your response.
 
 CRITICAL — TOOL CALL LANGUAGE RULE:

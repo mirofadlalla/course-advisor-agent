@@ -60,8 +60,11 @@ import os
 import httpx
 from pydantic_ai import Agent
 
+from pydantic_ai.models.groq import GroqModel
+
 from app.config import settings
 from app.dependencies import AgentDependencies
+from app.groq_compat import install_groq_tool_call_compat
 from app.prompts import SYSTEM_PROMPT
 from app.tools import get_course_by_name, search_knowledge
 
@@ -127,14 +130,32 @@ def create_agent() -> Agent:
     # construction time, bypassing pydantic-settings.  Ensure it is set.
     os.environ.setdefault("GROQ_API_KEY", settings.groq_api_key)
 
+    # Recover tool calls when Groq returns malformed XML in tool_use_failed.
+    install_groq_tool_call_compat()
+
+    model_name = settings.model_name
+    if model_name.startswith("groq:"):
+        groq_model = GroqModel(
+            model_name.removeprefix("groq:"),
+            settings={
+                # Disable parallel tool calls — reduces Groq sending multiple
+                # tool calls in one turn and malformed XML tool-call text.
+                "parallel_tool_calls": False,
+            },
+        )
+    else:
+        groq_model = model_name
+
     agent: Agent[AgentDependencies, str] = Agent(
-        model=settings.model_name,
+        model=groq_model,
         system_prompt=SYSTEM_PROMPT,
         # output_type intentionally omitted — see module docstring.
         # Using str (the default) eliminates the hidden `final_result` tool
         # that causes Groq parallel-tool-call interference.
         deps_type=AgentDependencies,
         tools=[search_knowledge, get_course_by_name],
+        # Extra retries when Groq still emits an unrecoverable tool call.
+        retries={"tools": 3, "output": 1},
     )
 
     # Compatibility shim: PydanticAI >=2.0 renamed _function_tools to

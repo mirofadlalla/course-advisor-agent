@@ -8,9 +8,9 @@ from individual submodules. This decouples callers from file structure.
 from app.schemas.agent import AgentResponse
 from app.schemas.api import ChatRequest, ChatResponse
 from app.schemas.course import Course
+from app.schemas.CourseSearchResult_ import CourseSearchResult
 from app.schemas.roadmap import Roadmap
 from app.schemas.search import SearchResult
-from app.schemas.CourseSearchResult_ import CourseSearchResult
 
 __all__ = [
     "AgentResponse",

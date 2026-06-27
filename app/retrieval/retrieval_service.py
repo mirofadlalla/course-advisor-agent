@@ -89,10 +89,7 @@ class RetrievalService(BaseRetriever):
         final_top_k = top_k or self._rerank_top_k
 
         # Step 1: Broad hybrid retrieval (Dense + BM25)
-        logger.debug(
-            f"RetrievalService: Phase 1 — Hybrid retrieval "
-            f"top_k={self._retrieval_top_k}"
-        )
+        logger.debug(f"RetrievalService: Phase 1 — Hybrid retrieval top_k={self._retrieval_top_k}")
         candidates = await self._retriever.retrieve(
             query=query,
             top_k=self._retrieval_top_k,

@@ -6,21 +6,21 @@ Other modules import from here, not from individual submodules.
 This decouples callers from internal file structure.
 """
 
+from app.ingestion.chunker import SemanticChunker
+from app.ingestion.index_builder import IndexBuilder
 from app.ingestion.loaders import (
     BaseDocumentLoader,
-    MarkdownLoader,
-    JSONLoader,
     CompositeLoader,
+    JSONLoader,
+    MarkdownLoader,
 )
 from app.ingestion.parsers import (
     BaseDocumentParser,
-    MarkdownStructuredParser,
     JSONFlatParser,
+    MarkdownStructuredParser,
 )
-from app.ingestion.chunker import SemanticChunker
-from app.ingestion.index_builder import IndexBuilder
-from app.ingestion.storage_manager import StorageManager
 from app.ingestion.pipeline import IngestionPipeline
+from app.ingestion.storage_manager import StorageManager
 
 __all__ = [
     "BaseDocumentLoader",

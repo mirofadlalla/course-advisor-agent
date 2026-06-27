@@ -43,7 +43,7 @@ agent loop only terminates when the model stops calling tools and returns
 plain text. This eliminates the `final_result` tool from the LLM's tool list,
 so parallel-tool-call interference is impossible.
 
-The AgentResponse class is kept here for future use (e.g., streaming, 
+The AgentResponse class is kept here for future use (e.g., streaming,
 post-processing, adding source citations as a second field). It is no longer
 passed to Agent(output_type=...).
 """
@@ -59,4 +59,5 @@ class AgentResponse(BaseModel):
     See module docstring for why output_type was removed.
     Kept for future use: citations, confidence scores, structured metadata.
     """
+
     response: str

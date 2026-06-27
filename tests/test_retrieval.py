@@ -6,13 +6,12 @@ and RetrievalService — all without a real vector store or embedding model.
 """
 
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from llama_index.core.schema import TextNode, NodeWithScore
-
+from llama_index.core.schema import NodeWithScore, TextNode
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def make_node(node_id: str, text: str = "content", metadata: dict | None = None) -> TextNode:
     return TextNode(
@@ -28,6 +27,7 @@ def make_node_with_score(node_id: str, score: float = 0.9, text: str = "content"
 
 def make_settings(**overrides):
     from app.config import Settings
+
     defaults = dict(
         groq_api_key="test-key",
         retrieval_top_k=8,
@@ -46,8 +46,8 @@ def run(coro):
 
 # ── BM25Retriever ──────────────────────────────────────────────────────────────
 
-class TestBM25Retriever:
 
+class TestBM25Retriever:
     def _nodes(self, n: int = 5):
         return [make_node(f"node-{i}", text=f"Document about topic {i}") for i in range(n)]
 
@@ -75,8 +75,9 @@ class TestBM25Retriever:
 
     def test_metadata_filter_applied(self):
         """Post-filter should remove nodes that don't match the filter."""
+        from llama_index.core.vector_stores.types import ExactMatchFilter, MetadataFilters
+
         from app.retrieval.bm25_retriever import BM25Retriever
-        from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 
         nodes = [
             make_node("a", metadata={"doc_type": "course"}),
@@ -86,42 +87,36 @@ class TestBM25Retriever:
         retriever = BM25Retriever(nodes, make_settings())
 
         # Test the internal filter logic directly
-        scored = [
-            NodeWithScore(node=n, score=0.5) for n in nodes
-        ]
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="doc_type", value="course")]
-        )
+        scored = [NodeWithScore(node=n, score=0.5) for n in nodes]
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="doc_type", value="course")])
         filtered = retriever._apply_filters(scored, filters)
 
         assert all(n.node.metadata["doc_type"] == "course" for n in filtered)
         assert len(filtered) == 2
 
     def test_matches_filters_true(self):
+        from llama_index.core.vector_stores.types import ExactMatchFilter, MetadataFilters
+
         from app.retrieval.bm25_retriever import BM25Retriever
-        from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 
         retriever = BM25Retriever([], make_settings())
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="doc_type", value="course")]
-        )
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="doc_type", value="course")])
         assert retriever._matches_filters({"doc_type": "course"}, filters) is True
 
     def test_matches_filters_false(self):
+        from llama_index.core.vector_stores.types import ExactMatchFilter, MetadataFilters
+
         from app.retrieval.bm25_retriever import BM25Retriever
-        from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 
         retriever = BM25Retriever([], make_settings())
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="doc_type", value="course")]
-        )
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="doc_type", value="course")])
         assert retriever._matches_filters({"doc_type": "markdown"}, filters) is False
 
 
 # ── HybridRetriever (RRF) ──────────────────────────────────────────────────────
 
-class TestHybridRetriever:
 
+class TestHybridRetriever:
     def _make_hybrid(self, dense_results, bm25_results):
         from app.retrieval.hybrid_retriever import HybridRetriever
 
@@ -134,10 +129,8 @@ class TestHybridRetriever:
         return HybridRetriever(dense, bm25)
 
     def test_rrf_combines_results(self):
-        from app.retrieval.hybrid_retriever import HybridRetriever
-
         dense = [make_node_with_score("a", 0.9), make_node_with_score("b", 0.8)]
-        bm25  = [make_node_with_score("b", 5.0), make_node_with_score("c", 3.0)]
+        bm25 = [make_node_with_score("b", 5.0), make_node_with_score("c", 3.0)]
 
         retriever = self._make_hybrid(dense, bm25)
         results = run(retriever.retrieve("query", top_k=4))
@@ -150,7 +143,7 @@ class TestHybridRetriever:
     def test_rrf_boosts_results_present_in_both(self):
         """A node ranked high in both lists should beat one ranked high in only one."""
         dense = [make_node_with_score("shared", 0.95), make_node_with_score("only_dense", 0.85)]
-        bm25  = [make_node_with_score("shared", 9.0),  make_node_with_score("only_bm25", 7.0)]
+        bm25 = [make_node_with_score("shared", 9.0), make_node_with_score("only_bm25", 7.0)]
 
         retriever = self._make_hybrid(dense, bm25)
         results = run(retriever.retrieve("query", top_k=3))
@@ -160,7 +153,7 @@ class TestHybridRetriever:
 
     def test_returns_top_k(self):
         dense = [make_node_with_score(f"d{i}") for i in range(10)]
-        bm25  = [make_node_with_score(f"b{i}") for i in range(10)]
+        bm25 = [make_node_with_score(f"b{i}") for i in range(10)]
 
         retriever = self._make_hybrid(dense, bm25)
         results = run(retriever.retrieve("query", top_k=5))
@@ -185,7 +178,7 @@ class TestHybridRetriever:
     def test_rrf_scores_assigned(self):
         """Returned nodes must have a positive RRF score."""
         dense = [make_node_with_score("a", 0.9)]
-        bm25  = [make_node_with_score("a", 3.0)]
+        bm25 = [make_node_with_score("a", 3.0)]
 
         retriever = self._make_hybrid(dense, bm25)
         results = run(retriever.retrieve("query", top_k=2))
@@ -194,7 +187,7 @@ class TestHybridRetriever:
 
     def test_rrf_formula_correctness(self):
         """Manually verify the RRF score for a known rank."""
-        from app.retrieval.hybrid_retriever import HybridRetriever, RRF_K
+        from app.retrieval.hybrid_retriever import RRF_K, HybridRetriever
 
         dense = MagicMock()
         dense.retrieve = AsyncMock(return_value=[make_node_with_score("only", 1.0)])
@@ -211,8 +204,8 @@ class TestHybridRetriever:
 
 # ── Reranker ───────────────────────────────────────────────────────────────────
 
-class TestReranker:
 
+class TestReranker:
     def test_noop_reranker_returns_top_k(self):
         from app.retrieval.reranker import NoOpReranker
 
@@ -238,14 +231,14 @@ class TestReranker:
         assert reranker.rerank("query", [], top_k=4) == []
 
     def test_factory_returns_noop_for_empty_backend(self):
-        from app.retrieval.reranker import RerankerFactory, NoOpReranker
+        from app.retrieval.reranker import NoOpReranker, RerankerFactory
 
         settings = make_settings(reranker_backend="")
         reranker = RerankerFactory.create(settings)
         assert isinstance(reranker, NoOpReranker)
 
     def test_factory_returns_noop_for_unknown_backend(self):
-        from app.retrieval.reranker import RerankerFactory, NoOpReranker
+        from app.retrieval.reranker import NoOpReranker, RerankerFactory
 
         settings = make_settings(reranker_backend="nonexistent")
         reranker = RerankerFactory.create(settings)
@@ -254,11 +247,10 @@ class TestReranker:
 
 # ── RetrievalService ───────────────────────────────────────────────────────────
 
-class TestRetrievalService:
 
+class TestRetrievalService:
     def _make_service(self, candidates, reranked=None):
         from app.retrieval.retrieval_service import RetrievalService
-        from app.retrieval.reranker import NoOpReranker
 
         hybrid = MagicMock()
         hybrid.retrieve = AsyncMock(return_value=candidates)
@@ -283,7 +275,8 @@ class TestRetrievalService:
         assert results == []
 
     def test_passes_filters_to_retriever(self):
-        from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
+        from llama_index.core.vector_stores.types import ExactMatchFilter, MetadataFilters
+
         from app.retrieval.retrieval_service import RetrievalService
 
         hybrid = MagicMock()
@@ -294,9 +287,7 @@ class TestRetrievalService:
 
         service = RetrievalService(hybrid, reranker, make_settings())
 
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="doc_type", value="course")]
-        )
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="doc_type", value="course")])
         run(service.retrieve("query", filters=filters))
 
         call_kwargs = hybrid.retrieve.call_args

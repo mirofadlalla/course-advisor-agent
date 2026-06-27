@@ -8,15 +8,14 @@ Tests verify that:
   - The agent is only created once (shared across requests)
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def make_deps():
-    from app.dependencies import AgentDependencies
     from app.config import Settings
+    from app.dependencies import AgentDependencies
 
     return AgentDependencies(
         course_repository=MagicMock(),
@@ -28,10 +27,11 @@ def make_deps():
 
 # ── create_agent ───────────────────────────────────────────────────────────────
 
-class TestCreateAgent:
 
+class TestCreateAgent:
     def test_create_agent_returns_agent(self):
         from pydantic_ai import Agent
+
         from app.agent import create_agent
 
         agent = create_agent()
@@ -58,8 +58,8 @@ class TestCreateAgent:
 
 # ── ChatService ────────────────────────────────────────────────────────────────
 
-class TestChatService:
 
+class TestChatService:
     def _make_service_with_mock_agent(self, agent_output: str):
         """Build a ChatService whose agent is replaced by a mock."""
         from app.services.chat_service import ChatService
@@ -110,9 +110,11 @@ class TestChatService:
         with patch("app.services.chat_service.create_agent") as mock_create:
             mock_create.return_value = MagicMock()
             from app.services.chat_service import ChatService
-            service = ChatService()
-            mock_create.assert_called_once()
 
+            ChatService()
+
+            mock_create.assert_called_once()
+            
     def test_agent_shared_across_calls(self):
         """All calls must use the same agent instance — no re-creation per request."""
         service = self._make_service_with_mock_agent("resp")
@@ -126,8 +128,8 @@ class TestChatService:
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
-class TestSystemPrompt:
 
+class TestSystemPrompt:
     def test_system_prompt_is_non_empty_string(self):
         from app.prompts import SYSTEM_PROMPT
 
@@ -136,8 +138,8 @@ class TestSystemPrompt:
 
     def test_system_prompt_contains_key_sections(self):
         from app.prompts import SYSTEM_PROMPT
-        from app.prompts.identity import IDENTITY
         from app.prompts.behavior import BEHAVIOR
+        from app.prompts.identity import IDENTITY
 
         # Each sub-prompt should appear in the combined prompt
         assert IDENTITY.strip()[:30] in SYSTEM_PROMPT

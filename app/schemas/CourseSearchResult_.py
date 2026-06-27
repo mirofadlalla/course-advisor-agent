@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class CourseSearchResult(BaseModel):
     found: bool
     name: str | None = None
@@ -9,7 +10,7 @@ class CourseSearchResult(BaseModel):
     link: str | None = None
 
 
-# ليه Model جديد؟ 
+# ليه Model جديد؟
 # ل ناتج الكورس مع اننا حلونا كل كورس من ديكشنري الي اويجكت
 
 # لأن الـ Repository عنده بيانات كتير.

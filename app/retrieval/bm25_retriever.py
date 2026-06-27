@@ -70,6 +70,7 @@ class BM25Retriever(BaseRetriever):
         """Build BM25 index from nodes. Runs at startup (once)."""
         try:
             from llama_index.retrievers.bm25 import BM25Retriever as LlamaBM25
+
             return LlamaBM25.from_defaults(
                 nodes=nodes,
                 similarity_top_k=self._default_top_k,

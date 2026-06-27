@@ -46,14 +46,14 @@ NODE STORAGE:
 import asyncio
 import logging
 
-from llama_index.core import VectorStoreIndex, StorageContext
+from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 
+from app.ingestion.chunker import SemanticChunker
 from app.ingestion.loaders import BaseDocumentLoader
 from app.ingestion.parsers import BaseDocumentParser
-from app.ingestion.chunker import SemanticChunker
 
 logger = logging.getLogger(__name__)
 
@@ -140,9 +140,7 @@ class IndexBuilder:
             f"IndexBuilder: Step 4/4 — Building vector index "
             f"({len(chunked_nodes)} chunks × embed_model={self._embed_model.model_name})..."
         )
-        storage_context = StorageContext.from_defaults(
-            vector_store=self._vector_store
-        )
+        storage_context = StorageContext.from_defaults(vector_store=self._vector_store)
         index = await loop.run_in_executor(
             None,
             lambda: VectorStoreIndex(

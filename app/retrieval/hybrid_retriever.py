@@ -51,10 +51,9 @@ from collections import defaultdict
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import MetadataFilters
 
-from app.config import Settings
 from app.retrieval.base import BaseRetriever
-from app.retrieval.dense_retriever import DenseRetriever
 from app.retrieval.bm25_retriever import BM25Retriever
+from app.retrieval.dense_retriever import DenseRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +82,7 @@ class HybridRetriever(BaseRetriever):
         self._dense = dense_retriever
         self._bm25 = bm25_retriever
         self._rrf_k = rrf_k
-        logger.info(
-            f"HybridRetriever initialized. "
-            f"Dense + BM25 with RRF k={rrf_k}"
-        )
+        logger.info(f"HybridRetriever initialized. Dense + BM25 with RRF k={rrf_k}")
 
     async def retrieve(
         self,
@@ -110,8 +106,7 @@ class HybridRetriever(BaseRetriever):
             list[NodeWithScore]: Fused results with RRF scores, descending.
         """
         logger.debug(
-            f"HybridRetriever: running Dense + BM25 concurrently "
-            f"for query='{query[:60]}...'"
+            f"HybridRetriever: running Dense + BM25 concurrently for query='{query[:60]}...'"
         )
 
         # Run both retrievers concurrently — halves retrieval latency

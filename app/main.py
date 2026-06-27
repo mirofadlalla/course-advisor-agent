@@ -406,7 +406,23 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
             )
 
         except Exception as exc:
+            # TEMPORARY DEBUG STEP: print to stdout/stderr directly (bypasses
+            # any logging config/level filtering on the hosting platform) AND
+            # surface the raw error as visible chat text, so we can finally
+            # see Groq's exact error body without depending on log access or
+            # browser devtools.
+            import traceback
+
+            print("=" * 60, flush=True)
+            print("STREAMING CHAT ERROR (full):", flush=True)
+            print(repr(exc), flush=True)
+            traceback.print_exc()
+            print("=" * 60, flush=True)
+
             logger.error(f"Streaming chat error: {exc}")
+
+            error_text = f"\n\n⚠️ DEBUG ERROR:\n{exc!r}\n"
+            yield f'data: {json.dumps({"type": "token", "text": error_text})}\n\n'
             yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
 
     return StreamingResponse(

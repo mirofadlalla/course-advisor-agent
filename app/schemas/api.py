@@ -27,12 +27,9 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
-<<<<<<< HEAD
     latency_ms: float = 0.0
     agent_process_ms: float = 0.0
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
     request_id: str = ""
-=======
->>>>>>> 5e4b5cf90fe050527dad2fc30929cda1b3623f63

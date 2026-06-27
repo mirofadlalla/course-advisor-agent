@@ -1,5 +1,4 @@
 """
-<<<<<<< HEAD
 services/chat_service.py — Chat Service (with Metrics Instrumentation)
 
 RESPONSIBILITY: Bridge between the FastAPI endpoint and the PydanticAI agent.
@@ -7,11 +6,6 @@ Also instruments every request with:
     - agent_process_ms  : wall-clock time inside run_sync()
     - tokens_in / out   : from result.usage() — actual LLM token counts
     - success / error   : written to MetricsStore via monitoring.store
-=======
-services/chat_service.py — Chat Service
-
-RESPONSIBILITY: Bridge between the FastAPI endpoint and the PydanticAI agent.
->>>>>>> 5e4b5cf90fe050527dad2fc30929cda1b3623f63
 
 CHANGE FROM PREVIOUS VERSION:
     The agent now returns `str` instead of `AgentResponse`.
@@ -28,7 +22,6 @@ CHANGE FROM PREVIOUS VERSION:
         no tool calls. Tool results are always fed back correctly first.
 
     ChatService.chat() now returns result.output directly (it's already a str).
-<<<<<<< HEAD
     The response dict shape is extended with timing + token fields.
 """
 
@@ -37,25 +30,14 @@ import time
 
 from app.agent import create_agent
 from app.config import settings as app_settings
-=======
-    The response dict shape is unchanged: {"response": str}
-"""
-
-import logging
-
-from app.agent import create_agent
->>>>>>> 5e4b5cf90fe050527dad2fc30929cda1b3623f63
 from app.dependencies import AgentDependencies
 
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
 # Groq pricing constants (duplicated here for the return payload)
 _COST_PER_1M_IN = 0.59
 _COST_PER_1M_OUT = 0.79
 
-=======
->>>>>>> 5e4b5cf90fe050527dad2fc30929cda1b3623f63
 
 class ChatService:
     """
@@ -71,11 +53,7 @@ class ChatService:
 
     def chat(self, question: str, deps: AgentDependencies) -> dict:
         """
-<<<<<<< HEAD
         Run the agent and return the final response with performance metrics.
-=======
-        Run the agent and return the final response as a dict.
->>>>>>> 5e4b5cf90fe050527dad2fc30929cda1b3623f63
 
         The agent output is `str` — the model's natural-language response
         produced AFTER all tool calls have completed and results fed back.
@@ -85,7 +63,6 @@ class ChatService:
             deps:     AgentDependencies from app.state (repositories + settings).
 
         Returns:
-<<<<<<< HEAD
             dict with keys:
                 response         — agent reply string
                 agent_process_ms — time inside run_sync (proxy for TTFT)
@@ -138,15 +115,3 @@ class ChatService:
             error_msg = str(exc)
             logger.error(f"ChatService.chat failed: {exc}")
             raise
-=======
-            {"response": str} — ready for FastAPI ChatResponse serialisation.
-        """
-        logger.info(f"ChatService.chat: question='{question[:80]}'")
-
-        result = self.agent.run_sync(question, deps=deps)
-
-        logger.debug(f"ChatService.chat: messages={result.all_messages()}")
-
-        # result.output is str — return it directly.
-        return {"response": result.output}
->>>>>>> 5e4b5cf90fe050527dad2fc30929cda1b3623f63

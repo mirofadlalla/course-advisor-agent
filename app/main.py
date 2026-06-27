@@ -48,9 +48,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 
-import asyncio
 import json
-import re
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, FileResponse, StreamingResponse
@@ -335,28 +333,19 @@ def chat(chat_request: ChatRequest, request: Request):
 
 # ── Streaming SSE endpoint ─────────────────────────────────────────────────
 
-def _clean_tool_syntax(text: str) -> str:
-    """Strip any accidental tool-call markup the model emitted as plain text."""
-    # Remove <function=...>...</function> blocks
-    text = re.sub(r"<function=[^>]+>.*?</function>", "", text, flags=re.DOTALL)
-    # Remove bare <function=...> without closing tag
-    text = re.sub(r"<function=[^\n>]+>?", "", text)
-    return text.strip()
-
-
 @app.post("/chat/stream")
 async def chat_stream(chat_request: ChatRequest, request: Request):
     """
     Streaming SSE version of /chat.
 
-    Calls the agent with `await agent.run(...)` directly in the same event
-    loop (no run_sync, no thread pool — see achat() docstring for why),
-    then streams the final text token-by-token over SSE so the frontend
-    can render characters as they arrive without waiting for the full response.
+    Uses PydanticAI run_stream() for native LLM token streaming. Application
+    status events are emitted during tool execution; tokens stream as soon as
+    the model begins generating the final answer.
 
     SSE event format:
-        data: {"type": "token",  "text": "<chunk>"}
-        data: {"type": "done",   "latency_ms": 123, "tokens_in": 50, "tokens_out": 80, "cost_usd": 0.0001}
+        data: {"type": "status", "text": "Searching knowledge base..."}
+        data: {"type": "token",  "text": "<delta>"}
+        data: {"type": "done",   "latency_ms": 123, "tokens_in": 50, ...}
         data: {"type": "error",  "message": "..."}
     """
     chat_service: ChatService | None = request.app.state.chat_service
@@ -368,62 +357,59 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
             return
 
         t_start = time.perf_counter()
+        recorded = False
+
         try:
-            # Call the agent directly with await — stays in the SAME event
-            # loop that owns the agent's httpx client. No threads, no
-            # run_in_executor, no cross-loop sharing of the async HTTP client.
-            result_dict = await chat_service.achat(
+            async for event in chat_service.astream(
                 question=chat_request.message,
                 deps=agent_deps,
-            )
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
 
-            total_latency_ms = round((time.perf_counter() - t_start) * 1000, 2)
-            raw_response: str = result_dict.get("response", "")
-            response_text = _clean_tool_syntax(raw_response)
-
-            # Stream the response in small chunks (~4 chars) so the UI
-            # renders progressively. Real token-level streaming requires
-            # pydantic-ai's run_stream() which needs an async context;
-            # this approach gives the same UX without restructuring the agent.
-            chunk_size = 4
-            for i in range(0, len(response_text), chunk_size):
-                chunk = response_text[i : i + chunk_size]
-                yield f'data: {json.dumps({"type": "token", "text": chunk})}\n\n'
-                await asyncio.sleep(0)  # yield control to event loop
-
-            # Final metadata event
-            yield f'data: {json.dumps({"type": "done", "latency_ms": total_latency_ms, "tokens_in": result_dict.get("tokens_in", 0), "tokens_out": result_dict.get("tokens_out", 0), "cost_usd": result_dict.get("cost_usd", 0.0)})}\n\n'
-
-            # Record metrics
-            metrics_store.record_request(
-                question=chat_request.message,
-                total_latency_ms=total_latency_ms,
-                agent_process_ms=result_dict.get("agent_process_ms", 0),
-                tokens_in=result_dict.get("tokens_in", 0),
-                tokens_out=result_dict.get("tokens_out", 0),
-                success=True,
-                model=settings.model_name,
-            )
+                if event.get("type") == "done":
+                    tokens_in = event.get("tokens_in", 0)
+                    tokens_out = event.get("tokens_out", 0)
+                    agent_process_ms = event.get("agent_process_ms", 0.0)
+                    total_latency_ms = round((time.perf_counter() - t_start) * 1000, 2)
+                    metrics_store.record_request(
+                        question=chat_request.message,
+                        total_latency_ms=total_latency_ms,
+                        agent_process_ms=agent_process_ms,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        success=True,
+                        model=settings.model_name,
+                    )
+                    recorded = True
+                elif event.get("type") == "error":
+                    total_latency_ms = round((time.perf_counter() - t_start) * 1000, 2)
+                    metrics_store.record_request(
+                        question=chat_request.message,
+                        total_latency_ms=total_latency_ms,
+                        agent_process_ms=event.get("agent_process_ms", 0),
+                        tokens_in=0,
+                        tokens_out=0,
+                        success=False,
+                        error_msg=event.get("message", "Unknown error"),
+                        model=settings.model_name,
+                    )
+                    recorded = True
 
         except Exception as exc:
-            # TEMPORARY DEBUG STEP: print to stdout/stderr directly (bypasses
-            # any logging config/level filtering on the hosting platform) AND
-            # surface the raw error as visible chat text, so we can finally
-            # see Groq's exact error body without depending on log access or
-            # browser devtools.
-            import traceback
-
-            print("=" * 60, flush=True)
-            print("STREAMING CHAT ERROR (full):", flush=True)
-            print(repr(exc), flush=True)
-            traceback.print_exc()
-            print("=" * 60, flush=True)
-
             logger.error(f"Streaming chat error: {exc}")
-
-            error_text = f"\n\n⚠️ DEBUG ERROR:\n{exc!r}\n"
-            yield f'data: {json.dumps({"type": "token", "text": error_text})}\n\n'
-            yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
+            yield f'data: {json.dumps({"type": "error", "message": "Model generation failed."})}\n\n'
+            if not recorded:
+                total_latency_ms = round((time.perf_counter() - t_start) * 1000, 2)
+                metrics_store.record_request(
+                    question=chat_request.message,
+                    total_latency_ms=total_latency_ms,
+                    agent_process_ms=0,
+                    tokens_in=0,
+                    tokens_out=0,
+                    success=False,
+                    error_msg=str(exc),
+                    model=settings.model_name,
+                )
 
     return StreamingResponse(
         event_generator(),

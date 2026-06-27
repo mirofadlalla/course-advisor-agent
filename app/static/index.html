@@ -224,6 +224,62 @@
       30%            { transform: translateY(-6px); opacity: 1; }
     }
 
+    /* ── Thinking timeline (application status, not CoT) ── */
+    .thinking-timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 14px;
+      margin-bottom: 10px;
+      background: rgba(108, 99, 255, 0.06);
+      border: 1px solid rgba(108, 99, 255, 0.15);
+      border-radius: var(--radius-md);
+      font-size: 0.82rem;
+    }
+
+    .timeline-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      transition: color var(--dur) var(--ease);
+    }
+
+    .timeline-step::before {
+      content: '○';
+      font-size: 0.65rem;
+      flex-shrink: 0;
+    }
+
+    .timeline-step.active {
+      color: var(--text-primary);
+    }
+
+    .timeline-step.active::before {
+      content: '●';
+      color: var(--primary);
+      animation: pulse 1.2s infinite;
+    }
+
+    .timeline-step.done {
+      color: var(--text-secondary, #94a3b8);
+    }
+
+    .timeline-step.done::before {
+      content: '✓';
+      color: #34d399;
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .stream-response {
+      min-height: 0;
+    }
+
     /* ── Input bar ────────────────────────────────────── */
     .chat-inputbar {
       padding: 16px 24px 20px;
@@ -701,11 +757,11 @@ async function sendMessage() {
   let streamedContent = '';
   let streamBubble = null;
   let streamBodyEl = null;
+  let timelineEl = null;
 
   function ensureStreamBubble() {
     if (streamBubble) return;
     removeTypingIndicator();
-    // Build an empty agent bubble we'll fill in as tokens arrive
     streamBubble = document.createElement('div');
     streamBubble.className = 'msg';
     streamBubble.innerHTML = `
@@ -715,12 +771,38 @@ async function sendMessage() {
           <span class="msg-author">Course Advisor</span>
           <span class="msg-ts">${formatTime(new Date().toISOString())}</span>
         </div>
-        <div class="msg-body stream-body"></div>
+        <div class="thinking-timeline stream-timeline"></div>
+        <div class="msg-body stream-body stream-response"></div>
         <div class="msg-footer stream-footer"></div>
       </div>`;
     messagesInner.appendChild(streamBubble);
+    timelineEl = streamBubble.querySelector('.stream-timeline');
     streamBodyEl = streamBubble.querySelector('.stream-body');
     scrollToBottom();
+  }
+
+  function appendTimelineStatus(text) {
+    ensureStreamBubble();
+    const steps = timelineEl.querySelectorAll('.timeline-step');
+    steps.forEach(step => {
+      if (step.classList.contains('active')) {
+        step.classList.remove('active');
+        step.classList.add('done');
+      }
+    });
+    const step = document.createElement('div');
+    step.className = 'timeline-step' + (text.startsWith('✓') ? ' done' : ' active');
+    step.textContent = text;
+    timelineEl.appendChild(step);
+    scrollToBottom();
+  }
+
+  function finalizeTimeline() {
+    if (!timelineEl) return;
+    timelineEl.querySelectorAll('.timeline-step').forEach(step => {
+      step.classList.remove('active');
+      step.classList.add('done');
+    });
   }
 
   try {
@@ -749,16 +831,18 @@ async function sendMessage() {
         let evt;
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
 
-        if (evt.type === 'token') {
+        if (evt.type === 'status') {
+          appendTimelineStatus(evt.text);
+
+        } else if (evt.type === 'token') {
           ensureStreamBubble();
           streamedContent += evt.text;
-          // Render markdown progressively
           streamBodyEl.innerHTML = renderMarkdown(escHtml(streamedContent));
           scrollToBottom();
 
         } else if (evt.type === 'done') {
           ensureStreamBubble();
-          // Finalise the bubble with footer stats
+          finalizeTimeline();
           const footerEl = streamBubble.querySelector('.stream-footer');
           footerEl.innerHTML = `
             ${evt.latency_ms ? `<span class="msg-stat">⏱ ${Math.round(evt.latency_ms)}ms</span>` : ''}
@@ -766,7 +850,6 @@ async function sendMessage() {
             ${evt.cost_usd ? `<span class="msg-stat">💲 $${evt.cost_usd.toFixed(6)}</span>` : ''}
             <button class="copy-btn" onclick="copyMsg(this)" data-text="${escAttr(streamedContent)}">⧉ Copy</button>`;
 
-          // Persist to session
           const agentMsg = {
             role: 'agent',
             content: streamedContent,
@@ -778,13 +861,19 @@ async function sendMessage() {
           s.messages.push(agentMsg);
           saveState();
 
-          // Status bar
           lastStats.style.display = 'flex';
           lastLatency.textContent = evt.latency_ms?.toFixed(0) ?? '–';
           lastTokens.textContent = (evt.tokens_in + evt.tokens_out) || '–';
 
         } else if (evt.type === 'error') {
-          throw new Error(evt.message);
+          removeTypingIndicator();
+          ensureStreamBubble();
+          finalizeTimeline();
+          const errText = `⚠️ ${evt.message}`;
+          streamBodyEl.innerHTML = renderMarkdown(escHtml(errText));
+          s.messages.push({ role: 'agent', content: errText, ts: new Date().toISOString() });
+          saveState();
+          toast(evt.message, 'error');
         }
       }
     }

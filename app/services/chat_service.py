@@ -23,14 +23,24 @@ CHANGE FROM PREVIOUS VERSION:
 
     ChatService.chat() now returns result.output directly (it's already a str).
     The response dict shape is extended with timing + token fields.
+
+STREAMING (astream):
+    Uses PydanticAI run_stream() for native LLM token streaming after tools
+    complete. Application status events (not chain-of-thought) are emitted
+    via event_stream_handler during tool execution.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
+from typing import Any
+
+from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
 
 from app.agent import create_agent
-from app.config import settings as app_settings
 from app.dependencies import AgentDependencies
 
 logger = logging.getLogger(__name__)
@@ -47,6 +57,18 @@ _COST_PER_1M_OUT = 0.79
 _MAX_TOOL_USE_RETRIES = 3
 _RETRY_BACKOFF_S = 0.5   # seconds to wait between retries
 
+_STREAM_END = object()
+
+# Observable application states shown in the thinking timeline (not CoT).
+_TOOL_STATUS_START: dict[str, str] = {
+    "search_knowledge": "Searching knowledge base...",
+    "get_course_by_name": "Looking up course...",
+}
+_TOOL_STATUS_DONE: dict[str, str] = {
+    "search_knowledge": "✓ Found relevant results",
+    "get_course_by_name": "✓ Found matching course",
+}
+
 
 def _is_tool_use_failed(exc: Exception) -> bool:
     """
@@ -62,6 +84,27 @@ def _is_tool_use_failed(exc: Exception) -> bool:
     )
 
 
+def _usage_cost(tokens_in: int, tokens_out: int) -> float:
+    return round(
+        (tokens_in / 1_000_000) * _COST_PER_1M_IN
+        + (tokens_out / 1_000_000) * _COST_PER_1M_OUT,
+        8,
+    )
+
+
+def _extract_usage(result: Any) -> tuple[int, int]:
+    tokens_in = 0
+    tokens_out = 0
+    try:
+        usage = result.usage()
+        if usage is not None:
+            tokens_in = getattr(usage, "request_tokens", 0) or 0
+            tokens_out = getattr(usage, "response_tokens", 0) or 0
+    except Exception as usage_err:
+        logger.debug(f"Could not extract usage: {usage_err}")
+    return tokens_in, tokens_out
+
+
 class ChatService:
     """
     Thin orchestrator between FastAPI and the PydanticAI agent.
@@ -73,6 +116,130 @@ class ChatService:
     def __init__(self) -> None:
         self.agent = create_agent()
         logger.info("ChatService initialized.")
+
+    async def astream(
+        self, question: str, deps: AgentDependencies
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Stream agent progress and native LLM tokens over SSE.
+
+        Yields dict events:
+            {"type": "status", "text": "..."}   — application timeline step
+            {"type": "token",  "text": "..."}   — LLM text delta
+            {"type": "done",   ...metrics...}   — run complete
+            {"type": "error",  "message": "..."} — user-facing failure
+        """
+        logger.info(f"ChatService.astream: question='{question[:80]}'")
+
+        queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        async def producer() -> None:
+            t0 = time.perf_counter()
+            phase = "tool"
+            last_exc: Exception | None = None
+
+            async def event_stream_handler(_ctx: Any, events: Any) -> None:
+                async for event in events:
+                    if isinstance(event, FunctionToolCallEvent):
+                        text = _TOOL_STATUS_START.get(event.part.tool_name)
+                        if text:
+                            await queue.put({"type": "status", "text": text})
+                    elif isinstance(event, FunctionToolResultEvent):
+                        tool_name = getattr(event.part, "tool_name", "")
+                        text = _TOOL_STATUS_DONE.get(tool_name)
+                        if text:
+                            await queue.put({"type": "status", "text": text})
+
+            try:
+                for attempt in range(1, _MAX_TOOL_USE_RETRIES + 1):
+                    try:
+                        async with self.agent.run_stream(
+                            question,
+                            deps=deps,
+                            event_stream_handler=event_stream_handler,
+                        ) as result:
+                            phase = "generation"
+                            await queue.put(
+                                {"type": "status", "text": "Generating answer..."}
+                            )
+
+                            streaming_started = False
+                            async for text in result.stream_text(
+                                delta=True, debounce_by=None
+                            ):
+                                if not text:
+                                    continue
+                                if not streaming_started:
+                                    await queue.put(
+                                        {
+                                            "type": "status",
+                                            "text": "Streaming response...",
+                                        }
+                                    )
+                                    streaming_started = True
+                                await queue.put({"type": "token", "text": text})
+
+                            agent_process_ms = round(
+                                (time.perf_counter() - t0) * 1000, 2
+                            )
+                            tokens_in, tokens_out = _extract_usage(result)
+
+                            await queue.put(
+                                {
+                                    "type": "done",
+                                    "latency_ms": agent_process_ms,
+                                    "agent_process_ms": agent_process_ms,
+                                    "tokens_in": tokens_in,
+                                    "tokens_out": tokens_out,
+                                    "cost_usd": _usage_cost(tokens_in, tokens_out),
+                                }
+                            )
+                            return
+
+                    except Exception as exc:
+                        last_exc = exc
+                        if (
+                            _is_tool_use_failed(exc)
+                            and attempt < _MAX_TOOL_USE_RETRIES
+                        ):
+                            logger.warning(
+                                f"ChatService.astream: Groq tool_use_failed on "
+                                f"attempt {attempt}/{_MAX_TOOL_USE_RETRIES}, "
+                                f"retrying in {_RETRY_BACKOFF_S}s … ({exc!r})"
+                            )
+                            await asyncio.sleep(_RETRY_BACKOFF_S)
+                            continue
+                        raise
+
+                raise RuntimeError("astream retry loop exhausted") from last_exc
+
+            except Exception as exc:
+                agent_process_ms = round((time.perf_counter() - t0) * 1000, 2)
+                logger.error(f"ChatService.astream failed: {exc}")
+                message = (
+                    "Model generation failed."
+                    if phase == "generation"
+                    else "Knowledge search failed."
+                )
+                await queue.put(
+                    {
+                        "type": "error",
+                        "message": message,
+                        "agent_process_ms": agent_process_ms,
+                    }
+                )
+            finally:
+                await queue.put(_STREAM_END)
+
+        task = asyncio.create_task(producer())
+        try:
+            while True:
+                item = await queue.get()
+                if item is _STREAM_END:
+                    break
+                yield item
+        finally:
+            await task
 
     async def achat(self, question: str, deps: AgentDependencies) -> dict:
         """
@@ -114,25 +281,14 @@ class ChatService:
 
                 logger.debug(f"ChatService.achat: messages={result.all_messages()}")
 
-                try:
-                    usage = result.usage()
-                    if usage is not None:
-                        tokens_in = getattr(usage, "request_tokens", 0) or 0
-                        tokens_out = getattr(usage, "response_tokens", 0) or 0
-                except Exception as usage_err:
-                    logger.debug(f"Could not extract usage: {usage_err}")
-
-                cost_usd = (
-                    (tokens_in / 1_000_000) * _COST_PER_1M_IN
-                    + (tokens_out / 1_000_000) * _COST_PER_1M_OUT
-                )
+                tokens_in, tokens_out = _extract_usage(result)
 
                 return {
                     "response": result.output,
                     "agent_process_ms": round(agent_process_ms, 2),
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
-                    "cost_usd": round(cost_usd, 8),
+                    "cost_usd": _usage_cost(tokens_in, tokens_out),
                     "success": True,
                     "error_msg": None,
                 }
@@ -184,8 +340,6 @@ class ChatService:
         logger.info(f"ChatService.chat: question='{question[:80]}'")
 
         t0 = time.perf_counter()
-        success = True
-        error_msg = None
         tokens_in = 0
         tokens_out = 0
 
@@ -195,33 +349,18 @@ class ChatService:
 
             logger.debug(f"ChatService.chat: messages={result.all_messages()}")
 
-            # Extract token usage from PydanticAI result
-            try:
-                usage = result.usage()
-                if usage is not None:
-                    tokens_in = getattr(usage, "request_tokens", 0) or 0
-                    tokens_out = getattr(usage, "response_tokens", 0) or 0
-            except Exception as usage_err:
-                logger.debug(f"Could not extract usage: {usage_err}")
-
-            cost_usd = (
-                (tokens_in / 1_000_000) * _COST_PER_1M_IN
-                + (tokens_out / 1_000_000) * _COST_PER_1M_OUT
-            )
+            tokens_in, tokens_out = _extract_usage(result)
 
             return {
                 "response": result.output,
                 "agent_process_ms": round(agent_process_ms, 2),
                 "tokens_in": tokens_in,
                 "tokens_out": tokens_out,
-                "cost_usd": round(cost_usd, 8),
+                "cost_usd": _usage_cost(tokens_in, tokens_out),
                 "success": True,
                 "error_msg": None,
             }
 
         except Exception as exc:
-            agent_process_ms = (time.perf_counter() - t0) * 1000
-            success = False
-            error_msg = str(exc)
             logger.error(f"ChatService.chat failed: {exc}")
             raise

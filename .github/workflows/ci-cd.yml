@@ -184,13 +184,80 @@ jobs:
 # Pushes app code to the HF Space git repository.
 # HF Spaces rebuilds the Docker container automatically on push.
 # ─────────────────────────────────────────────────────────────────────────────
+  # deploy:
+  #   name: Deploy to HuggingFace Spaces
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #   if: >-
+  #     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+  #     github.event.inputs.force_deploy == 'true'
+  #   environment:
+  #     name: huggingface-spaces
+  #     url: https://huggingface.co/spaces/${{ vars.HF_SPACE_ID }}
+
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0  # full history for git operations
+
+  #     - name: Install huggingface_hub CLI
+  #       run: pip install "huggingface_hub[cli]>=0.23"
+
+  #     - name: Configure git identity
+  #       run: |
+  #         git config --global user.email "ci@github.com"
+  #         git config --global user.name "GitHub Actions"
+
+  #     - name: Push to HuggingFace Space
+  #       env:
+  #         HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  #         HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+  #       run: |
+  #         hf auth login --token "$HF_TOKEN" --add-to-git-credential
+
+  #         HF_REMOTE="https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_ID}"
+
+  #         git remote add hf "$HF_REMOTE" 2>/dev/null || \
+  #         git remote set-url hf "$HF_REMOTE"
+
+  #         git push hf HEAD:main --force
+
+  #         echo "### Deployed to HuggingFace Spaces ✅" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Space:** https://huggingface.co/spaces/$HF_SPACE_ID" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+  #     - name: Wait for Space to rebuild and verify health
+  #       env:
+  #         HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+  #         HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  #       run: |
+  #         SPACE_URL="https://${HF_SPACE_ID/\//-}.hf.space"
+  #         echo "Polling health at: $SPACE_URL/health"
+
+  #         MAX_RETRIES=40
+  #         RETRY=0
+  #         until curl -sf "$SPACE_URL/health" > /dev/null 2>&1; do
+  #           RETRY=$((RETRY + 1))
+  #           if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
+  #             echo "❌ Health check failed after $((MAX_RETRIES * 15))s"
+  #             exit 1
+  #           fi
+  #           echo "[$RETRY/$MAX_RETRIES] Not ready yet, waiting 15s..."
+  #           sleep 15
+  #         done
+
+  #         echo "✅ Space is healthy at $SPACE_URL"
+  #         echo "**Health check:** ✅ Passed" >> $GITHUB_STEP_SUMMARY
+
   deploy:
     name: Deploy to HuggingFace Spaces
     runs-on: ubuntu-latest
-    needs: build
+    needs: test
+
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event.inputs.force_deploy == 'true'
+
     environment:
       name: huggingface-spaces
       url: https://huggingface.co/spaces/${{ vars.HF_SPACE_ID }}
@@ -198,24 +265,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # full history for git operations
+          fetch-depth: 0
 
+      # ─────────────────────────────────────────────
+      # Install HF CLI (NO LOGIN STEP NEEDED)
+      # ─────────────────────────────────────────────
       - name: Install huggingface_hub CLI
         run: pip install "huggingface_hub[cli]>=0.23"
 
+      # ─────────────────────────────────────────────
+      # Configure Git identity (safe)
+      # ─────────────────────────────────────────────
       - name: Configure git identity
         run: |
           git config --global user.email "ci@github.com"
           git config --global user.name "GitHub Actions"
 
+      # ─────────────────────────────────────────────
+      # Setup HF auth safely via env (no CLI login)
+      # ─────────────────────────────────────────────
+      - name: Setup HuggingFace auth
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global credential.helper store
+          echo "https://user:${HF_TOKEN}@huggingface.co" > ~/.git-credentials
+
+      # ─────────────────────────────────────────────
+      # Push to HF Space
+      # ─────────────────────────────────────────────
       - name: Push to HuggingFace Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
-          huggingface-cli login --token "$HF_TOKEN" --add-to-git-credential
+          set -e
 
-          HF_REMOTE="https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_ID}"
+          HF_REMOTE="https://huggingface.co/spaces/${HF_SPACE_ID}"
 
           git remote add hf "$HF_REMOTE" 2>/dev/null || \
           git remote set-url hf "$HF_REMOTE"
@@ -224,27 +310,30 @@ jobs:
 
           echo "### Deployed to HuggingFace Spaces ✅" >> $GITHUB_STEP_SUMMARY
           echo "**Space:** https://huggingface.co/spaces/$HF_SPACE_ID" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** $GITHUB_SHA" >> $GITHUB_STEP_SUMMARY
 
-      - name: Wait for Space to rebuild and verify health
+      # ─────────────────────────────────────────────
+      # Safer health check (retry + timeout)
+      # ─────────────────────────────────────────────
+      - name: Health check (safe retry)
         env:
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          SPACE_URL="https://${HF_SPACE_ID/\//-}.hf.space"
-          echo "Polling health at: $SPACE_URL/health"
+          set +e
 
-          MAX_RETRIES=40
-          RETRY=0
-          until curl -sf "$SPACE_URL/health" > /dev/null 2>&1; do
-            RETRY=$((RETRY + 1))
-            if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
-              echo "❌ Health check failed after $((MAX_RETRIES * 15))s"
-              exit 1
+          SPACE_URL="https://${HF_SPACE_ID/\//-}.hf.space"
+          echo "Checking health: $SPACE_URL/health"
+
+          for i in {1..30}; do
+            if curl -sf "$SPACE_URL/health" > /dev/null; then
+              echo "✅ Space is healthy"
+              echo "**Health check:** Passed" >> $GITHUB_STEP_SUMMARY
+              exit 0
             fi
-            echo "[$RETRY/$MAX_RETRIES] Not ready yet, waiting 15s..."
-            sleep 15
+
+            echo "Attempt $i/30 failed — retrying in 10s..."
+            sleep 10
           done
 
-          echo "✅ Space is healthy at $SPACE_URL"
-          echo "**Health check:** ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          echo "❌ Health check failed"
+          exit 1

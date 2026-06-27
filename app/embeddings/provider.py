@@ -101,8 +101,7 @@ class EmbeddingProvider:
             )
 
             logger.info(
-                f"EmbeddingProvider: Model loaded. "
-                f"Embedding dimension: {cls._instance.embed_dim}"
+                f"EmbeddingProvider: Model loaded. Embedding dimension: {cls._instance.embed_dim}"
             )
 
         return cls._instance

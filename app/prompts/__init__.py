@@ -1,8 +1,8 @@
-from .identity import IDENTITY
 from .behavior import BEHAVIOR
-from .safety import SAFETY
 from .formatting import FORMATTING
+from .identity import IDENTITY
 from .rag import RAG_PROMPT
+from .safety import SAFETY
 
 SYSTEM_PROMPT = "\n\n".join(
     [

@@ -41,8 +41,8 @@ import logging
 from pathlib import Path
 
 from llama_index.core import (
-    VectorStoreIndex,
     StorageContext,
+    VectorStoreIndex,
     load_index_from_storage,
 )
 from llama_index.core.embeddings import BaseEmbedding
@@ -121,9 +121,7 @@ class StorageManager:
         logger.info(f"StorageManager: Loading index from {self._storage_path}...")
 
         try:
-            storage_context = StorageContext.from_defaults(
-                persist_dir=str(self._storage_path)
-            )
+            storage_context = StorageContext.from_defaults(persist_dir=str(self._storage_path))
             index = load_index_from_storage(
                 storage_context,
                 embed_model=self._embed_model,
@@ -144,6 +142,7 @@ class StorageManager:
         Called via admin endpoint or CLI when knowledge base is updated.
         """
         import shutil
+
         if self._storage_path.exists():
             shutil.rmtree(self._storage_path)
             logger.info(f"StorageManager: Deleted index at {self._storage_path}")

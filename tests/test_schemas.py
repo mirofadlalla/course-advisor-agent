@@ -5,14 +5,14 @@ Tests Pydantic schemas and repository lookup logic
 with mocked/in-memory data — no file system or API access.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ── ChatRequest / ChatResponse ─────────────────────────────────────────────────
 
-class TestAPISchemas:
 
+class TestAPISchemas:
     def test_chat_request_valid(self):
         from app.schemas.api import ChatRequest
 
@@ -34,8 +34,8 @@ class TestAPISchemas:
 
 # ── SearchResult ───────────────────────────────────────────────────────────────
 
-class TestSearchResult:
 
+class TestSearchResult:
     def test_basic_construction(self):
         from app.schemas.search import SearchResult
 
@@ -73,8 +73,8 @@ class TestSearchResult:
 
 # ── Course schema ──────────────────────────────────────────────────────────────
 
-class TestCourseSchema:
 
+class TestCourseSchema:
     def test_all_fields_optional(self):
         from app.schemas.course import Course
 
@@ -148,7 +148,8 @@ FAKE_COURSES = [
 def course_repo():
     """CourseRepository with mocked data — no file I/O."""
     import json
-    from unittest.mock import mock_open, patch
+    from unittest.mock import mock_open
+
     from app.repositories.course_repository import CourseRepository
 
     mock_data = json.dumps(FAKE_COURSES)
@@ -156,12 +157,12 @@ def course_repo():
         with patch("pathlib.Path.open", mock_open(read_data=mock_data)):
             repo = CourseRepository.__new__(CourseRepository)
             from app.schemas.course import Course
+
             repo.courses = [Course.model_validate(c) for c in FAKE_COURSES]
     return repo
 
 
 class TestCourseRepository:
-
     def test_find_by_exact_name_hit(self, course_repo):
         course = course_repo.find_by_exact_name("Python Programming")
         assert course is not None
@@ -210,12 +211,11 @@ class TestCourseRepository:
 
 # ── AgentDependencies ──────────────────────────────────────────────────────────
 
-class TestAgentDependencies:
 
+class TestAgentDependencies:
     def test_construction(self):
-        from app.dependencies import AgentDependencies
         from app.config import Settings
-        from unittest.mock import MagicMock
+        from app.dependencies import AgentDependencies
 
         deps = AgentDependencies(
             course_repository=MagicMock(),

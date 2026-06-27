@@ -89,10 +89,7 @@ class ChromaVectorStoreAdapter(BaseVectorStore):
         )
 
         self._store = ChromaVectorStore(chroma_collection=collection)
-        logger.info(
-            f"ChromaVectorStoreAdapter: Ready. "
-            f"Collection='{settings.chroma_collection}'"
-        )
+        logger.info(f"ChromaVectorStoreAdapter: Ready. Collection='{settings.chroma_collection}'")
 
     def get_llama_vector_store(self):
         return self._store

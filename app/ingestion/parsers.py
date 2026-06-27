@@ -78,10 +78,7 @@ class MarkdownStructuredParser(BaseDocumentParser):
         self._parser = MarkdownNodeParser()
 
     def parse(self, documents: list[Document]) -> list[BaseNode]:
-        markdown_docs = [
-            doc for doc in documents
-            if doc.metadata.get("doc_type") == "markdown"
-        ]
+        markdown_docs = [doc for doc in documents if doc.metadata.get("doc_type") == "markdown"]
 
         if not markdown_docs:
             logger.warning("MarkdownStructuredParser: no markdown documents found.")
@@ -125,8 +122,7 @@ class JSONFlatParser(BaseDocumentParser):
 
     def parse(self, documents: list[Document]) -> list[BaseNode]:
         json_docs = [
-            doc for doc in documents
-            if doc.metadata.get("doc_type") in ("course", "roadmap")
+            doc for doc in documents if doc.metadata.get("doc_type") in ("course", "roadmap")
         ]
 
         if not json_docs:

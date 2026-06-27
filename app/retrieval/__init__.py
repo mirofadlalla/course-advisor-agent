@@ -3,8 +3,8 @@ retrieval/__init__.py
 """
 
 from app.retrieval.base import BaseRetriever
-from app.retrieval.dense_retriever import DenseRetriever
 from app.retrieval.bm25_retriever import BM25Retriever
+from app.retrieval.dense_retriever import DenseRetriever
 from app.retrieval.hybrid_retriever import HybridRetriever
 from app.retrieval.reranker import (
     BaseReranker,

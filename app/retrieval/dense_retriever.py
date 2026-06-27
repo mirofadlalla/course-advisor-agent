@@ -59,10 +59,7 @@ class DenseRetriever(BaseRetriever):
     def __init__(self, index: VectorStoreIndex, settings: Settings) -> None:
         self._index = index
         self._default_top_k = settings.retrieval_top_k
-        logger.info(
-            f"DenseRetriever initialized. "
-            f"Default top_k={self._default_top_k}"
-        )
+        logger.info(f"DenseRetriever initialized. Default top_k={self._default_top_k}")
 
     async def retrieve(
         self,

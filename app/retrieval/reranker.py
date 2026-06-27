@@ -137,6 +137,7 @@ class BGEReranker(BaseReranker):
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3") -> None:
         try:
             from sentence_transformers import CrossEncoder
+
             logger.info(f"BGEReranker: Loading cross-encoder '{model_name}'...")
             self._model = CrossEncoder(
                 model_name,
@@ -173,13 +174,10 @@ class BGEReranker(BaseReranker):
         )
 
         reranked = [
-            NodeWithScore(node=node.node, score=float(score))
-            for score, node in scored[:top_k]
+            NodeWithScore(node=node.node, score=float(score)) for score, node in scored[:top_k]
         ]
 
-        logger.debug(
-            f"BGEReranker: {len(nodes)} candidates → {len(reranked)} reranked results."
-        )
+        logger.debug(f"BGEReranker: {len(nodes)} candidates → {len(reranked)} reranked results.")
         return reranked
 
 
@@ -207,6 +205,7 @@ class CohereReranker(BaseReranker):
     def __init__(self, api_key: str, model: str = "rerank-multilingual-v3.0") -> None:
         try:
             import cohere
+
             self._client = cohere.Client(api_key)
             self._model = model
             logger.info(f"CohereReranker: Ready with model='{model}'")
@@ -284,8 +283,7 @@ class RerankerFactory:
         else:
             if backend:
                 logger.warning(
-                    f"RerankerFactory: Unknown reranker backend '{backend}'. "
-                    "Using NoOpReranker."
+                    f"RerankerFactory: Unknown reranker backend '{backend}'. Using NoOpReranker."
                 )
             else:
                 logger.info("RerankerFactory: Reranker disabled. Using NoOpReranker.")

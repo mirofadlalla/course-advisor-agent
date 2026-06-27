@@ -103,6 +103,7 @@ class VectorStoreFactory:
         """Attempt to create Chroma adapter, fallback to Simple on any failure."""
         try:
             from app.vectorstores.chroma_store import ChromaVectorStoreAdapter
+
             logger.info("VectorStoreFactory: Creating ChromaVectorStoreAdapter...")
             return ChromaVectorStoreAdapter(settings)
         except ImportError as e:
@@ -124,6 +125,7 @@ class VectorStoreFactory:
         """Attempt to create Qdrant adapter, fallback to Simple on any failure."""
         try:
             from app.vectorstores.qdrant_store import QdrantVectorStoreAdapter
+
             logger.info("VectorStoreFactory: Creating QdrantVectorStoreAdapter...")
             return QdrantVectorStoreAdapter(settings)
         except ImportError as e:

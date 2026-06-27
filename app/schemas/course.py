@@ -22,6 +22,7 @@ class Course(BaseModel):
 
     roadmaps: list[str] | None = None
 
+
 # ليه استخدمنا Field؟
 # بدل
 # roadmaps = []

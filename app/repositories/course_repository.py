@@ -1,37 +1,28 @@
 import json
 from pathlib import Path
-from typing import Optional
-
-from app.schemas.course import Course
-from app.schemas.roadmap import Roadmap
 
 from rapidfuzz import process
 
+from app.schemas.course import Course
+
+
 class CourseRepository:
-
     def __init__(self):
-
         self.courses = self._load_courses()
 
-
     def _load_courses(self):
-
         path = Path("data/json/kayfa_courses.json")
 
         with open(path, encoding="utf-8") as f:
-
             data = json.load(f)
 
             # Convert Into List Of Objects Instead of List Of Dicts
-            return [
-                Course.model_validate(course)
-                for course in data
-            ]
+            return [Course.model_validate(course) for course in data]
 
     # Exact Match
     def find_by_exact_name(
-    self,
-    query: str,
+        self,
+        query: str,
     ):
         query = query.strip().lower()
 
@@ -43,13 +34,12 @@ class CourseRepository:
 
     # Contains Match
     def find_by_keyword(
-    self,
-    query: str,
+        self,
+        query: str,
     ):
         query = query.strip().lower()
 
         for course in self.courses:
-
             course_name = course.name.lower()
 
             if query in course_name:
@@ -58,17 +48,14 @@ class CourseRepository:
             if course_name in query:
                 return course
 
-        return None 
-    
+        return None
+
     # Fuzzy Match
     def find_by_fuzzy(
-    self,
-    query: str,
+        self,
+        query: str,
     ):
-        names = [
-            course.name
-            for course in self.courses
-        ]
+        names = [course.name for course in self.courses]
 
         result = process.extractOne(
             query,
@@ -88,13 +75,12 @@ class CourseRepository:
                 return course
 
         return None
-    
+
     # Find Best Course
     def find_best_course(
-    self,
-    query: str,
+        self,
+        query: str,
     ):
-
         course = self.find_by_exact_name(query)
 
         if course:
@@ -111,6 +97,7 @@ class CourseRepository:
             return course
 
         return None
+
 
 # repo = CourseRepository()
 

@@ -28,10 +28,9 @@ WHY CONVERT NodeWithScore → SearchResult?
 import logging
 
 from llama_index.core.vector_stores.types import (
-    MetadataFilters,
     ExactMatchFilter,
-    FilterOperator,
     FilterCondition,
+    MetadataFilters,
 )
 
 from app.repositories.base import IKnowledgeRepository
@@ -56,8 +55,7 @@ class KnowledgeRepository(IKnowledgeRepository):
     def __init__(self, retrieval_service: BaseRetriever) -> None:
         self._service = retrieval_service
         logger.info(
-            f"KnowledgeRepository initialized with "
-            f"retriever={type(retrieval_service).__name__}"
+            f"KnowledgeRepository initialized with retriever={type(retrieval_service).__name__}"
         )
 
     async def search(
@@ -82,8 +80,7 @@ class KnowledgeRepository(IKnowledgeRepository):
             list[SearchResult]: Domain objects, decoupled from LlamaIndex.
         """
         logger.info(
-            f"KnowledgeRepository.search: query='{query[:60]}...', "
-            f"top_k={top_k}, filters={filters}"
+            f"KnowledgeRepository.search: query='{query[:60]}...', top_k={top_k}, filters={filters}"
         )
 
         # Build LlamaIndex MetadataFilters from the dict
@@ -99,9 +96,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         # Convert NodeWithScore → SearchResult (infrastructure → domain)
         results = [self._to_search_result(node) for node in nodes]
 
-        logger.info(
-            f"KnowledgeRepository.search: returned {len(results)} results."
-        )
+        logger.info(f"KnowledgeRepository.search: returned {len(results)} results.")
         return results
 
     def _build_filters(self, filters: dict | None) -> MetadataFilters | None:
@@ -135,10 +130,7 @@ class KnowledgeRepository(IKnowledgeRepository):
         return SearchResult(
             text=node.get_content(),
             score=float(node_with_score.score or 0.0),
-            source_file=metadata.get(
-                "file_name",
-                metadata.get("source_file", "unknown")
-            ),
+            source_file=metadata.get("file_name", metadata.get("source_file", "unknown")),
             doc_type=metadata.get("doc_type", ""),
             section_header=metadata.get("section_summary", metadata.get("header", "")),
             metadata={k: v for k, v in metadata.items()},

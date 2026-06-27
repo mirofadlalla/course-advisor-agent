@@ -49,16 +49,16 @@ class QdrantVectorStoreAdapter(BaseVectorStore):
 
     def __init__(self, settings: Settings) -> None:
         try:
+            from llama_index.vector_stores.qdrant import QdrantVectorStore
             from qdrant_client import QdrantClient
             from qdrant_client.models import Distance, VectorParams
-            from llama_index.vector_stores.qdrant import QdrantVectorStore
         except ImportError as e:
             raise ImportError(
                 "qdrant-client is not installed. "
                 "Install with: pip install qdrant-client llama-index-vector-stores-qdrant"
             ) from e
 
-        api_key = settings.qdrant_api_key or None   # empty string → None
+        api_key = settings.qdrant_api_key or None  # empty string → None
         logger.info(f"QdrantVectorStoreAdapter: Connecting to {settings.qdrant_url}")
 
         client = QdrantClient(url=settings.qdrant_url, api_key=api_key)
@@ -82,10 +82,7 @@ class QdrantVectorStoreAdapter(BaseVectorStore):
             client=client,
             collection_name=settings.qdrant_collection,
         )
-        logger.info(
-            f"QdrantVectorStoreAdapter: Ready. "
-            f"Collection='{settings.qdrant_collection}'"
-        )
+        logger.info(f"QdrantVectorStoreAdapter: Ready. Collection='{settings.qdrant_collection}'")
 
     def get_llama_vector_store(self):
         return self._store

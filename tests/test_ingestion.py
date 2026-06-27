@@ -5,15 +5,16 @@ Tests the ingestion pipeline components in isolation.
 No embedding model, no vector store, no API calls.
 """
 
-import pytest
 from unittest.mock import MagicMock
-from llama_index.core.schema import Document, TextNode
 
+from llama_index.core.schema import Document
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 def make_settings(**overrides):
     from app.config import Settings
+
     defaults = dict(groq_api_key="test-key", chunk_size=512, chunk_overlap=64)
     defaults.update(overrides)
     return Settings(**defaults)
@@ -35,8 +36,8 @@ def make_course_doc(text: str) -> Document:
 
 # ── MarkdownStructuredParser ───────────────────────────────────────────────────
 
-class TestMarkdownStructuredParser:
 
+class TestMarkdownStructuredParser:
     def test_parses_markdown_documents(self):
         from app.ingestion.parsers import MarkdownStructuredParser
 
@@ -67,16 +68,18 @@ class TestMarkdownStructuredParser:
         from app.ingestion.parsers import MarkdownStructuredParser
 
         parser = MarkdownStructuredParser()
-        text = "\n".join([
-            "# H1",
-            "Intro paragraph.",
-            "",
-            "## Section One",
-            "Content one.",
-            "",
-            "## Section Two",
-            "Content two.",
-        ])
+        text = "\n".join(
+            [
+                "# H1",
+                "Intro paragraph.",
+                "",
+                "## Section One",
+                "Content one.",
+                "",
+                "## Section Two",
+                "Content two.",
+            ]
+        )
         nodes = parser.parse([make_markdown_doc(text)])
         # At least one node per top-level section
         assert len(nodes) >= 1
@@ -84,8 +87,8 @@ class TestMarkdownStructuredParser:
 
 # ── JSONFlatParser ─────────────────────────────────────────────────────────────
 
-class TestJSONFlatParser:
 
+class TestJSONFlatParser:
     def test_parses_course_documents(self):
         from app.ingestion.parsers import JSONFlatParser
 
@@ -124,8 +127,8 @@ class TestJSONFlatParser:
 
 # ── CompositeParser ────────────────────────────────────────────────────────────
 
-class TestCompositeParser:
 
+class TestCompositeParser:
     def test_routes_to_both_parsers(self):
         from app.ingestion.parsers import CompositeParser
 
@@ -145,7 +148,7 @@ class TestCompositeParser:
 
     def test_custom_parsers(self):
         """CompositeParser should accept injected parsers."""
-        from app.ingestion.parsers import CompositeParser, MarkdownStructuredParser
+        from app.ingestion.parsers import CompositeParser
 
         mock_parser = MagicMock()
         mock_parser.parse.return_value = []
@@ -158,8 +161,8 @@ class TestCompositeParser:
 
 # ── SemanticChunker ────────────────────────────────────────────────────────────
 
-class TestSemanticChunker:
 
+class TestSemanticChunker:
     def test_returns_nodes_for_non_empty_input(self):
         from app.ingestion.chunker import SemanticChunker
         from app.ingestion.parsers import MarkdownStructuredParser

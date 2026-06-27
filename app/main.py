@@ -101,10 +101,12 @@ async def lifespan(app: FastAPI):
 
     # ── Step 3: Ingestion components ───────────────────────────────────
     logger.info("Step 3/9: Configuring ingestion pipeline components...")
-    loader = CompositeLoader([
-        MarkdownLoader(settings),
-        JSONLoader(settings),
-    ])
+    loader = CompositeLoader(
+        [
+            MarkdownLoader(settings),
+            JSONLoader(settings),
+        ]
+    )
     parser = CompositeParser()
     chunker = SemanticChunker(settings)
 
@@ -138,10 +140,7 @@ async def lifespan(app: FastAPI):
     hybrid_retriever = HybridRetriever(dense_retriever, bm25_retriever)
     reranker = RerankerFactory.create(settings)
     retrieval_service = RetrievalService(hybrid_retriever, reranker, settings)
-    logger.info(
-        f"Step 5/9: Retrieval ready. "
-        f"Reranker: {type(reranker).__name__}"
-    )
+    logger.info(f"Step 5/9: Retrieval ready. Reranker: {type(reranker).__name__}")
 
     # ── Step 8: Repositories ───────────────────────────────────────────
     logger.info("Step 6/9: Initializing repositories...")

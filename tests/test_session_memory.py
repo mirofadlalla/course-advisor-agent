@@ -28,14 +28,47 @@ class TestSessionMemory:
         store.append_turn("sess-1", "Second question", "Second answer")
 
         history = store.get_history("sess-1")
-        assert len(history) == 4  # 2 user + 2 assistant ModelMessage objects
+        assert len(history) == 4
         assert store.get_user_messages("sess-1") == [
             "Hello",
             "Second question",
         ]
 
-    def test_chat_passes_message_history_to_agent(self):
-        store = SessionStore()
+    def test_llm_history_limited_to_last_n_turns(self):
+        store = SessionStore(llm_turns=2, assistant_history_chars=1000)
+        for i in range(4):
+            store.append_turn("sess-2", f"Q{i}", f"A{i}")
+
+        llm_history = store.get_llm_history("sess-2")
+        assert len(llm_history) == 4  # 2 turns × 2 messages
+        user_texts = [
+            p.content
+            for msg in llm_history
+            if hasattr(msg, "parts")
+            for p in msg.parts
+            if hasattr(p, "content") and isinstance(p.content, str) and p.content.startswith("Q")
+        ]
+        assert user_texts == ["Q2", "Q3"]
+
+    def test_llm_history_truncates_long_assistant_replies(self):
+        store = SessionStore(llm_turns=1, assistant_history_chars=20)
+        store.append_turn("sess-3", "Q", "A" * 100)
+
+        llm_history = store.get_llm_history("sess-3")
+        assistant_text = llm_history[1].parts[0].content  # type: ignore[index, union-attr]
+        assert len(assistant_text) <= 21
+        assert assistant_text.endswith("…")
+
+    def test_recent_user_messages_capped_for_analysis(self):
+        store = SessionStore(analysis_user_messages=2)
+        for i in range(5):
+            store.append_turn("sess-4", f"msg-{i}", "ok")
+
+        recent = store.get_recent_user_messages("sess-4")
+        assert recent == ["msg-3", "msg-4"]
+
+    def test_chat_passes_limited_message_history_to_agent(self):
+        store = SessionStore(llm_turns=3)
         store.append_turn("sess-x", "First message", "First reply")
 
         service = ChatService.__new__(ChatService)
@@ -59,6 +92,7 @@ class TestSessionMemory:
         assert call_kwargs.get("message_history") is not None
         assert len(call_kwargs["message_history"]) == 2
         assert call_kwargs.get("instructions")
+        assert call_kwargs.get("usage_limits") is not None
 
     @pytest.mark.asyncio
     async def test_finalize_turn_stores_new_messages(self):

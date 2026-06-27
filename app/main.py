@@ -182,7 +182,12 @@ async def lifespan(app: FastAPI):
             settings.mongodb_database,
             settings.mongodb_collection,
         )
-        session_store = SessionStore(max_messages=settings.session_max_messages)
+        session_store = SessionStore(
+            max_messages=settings.session_max_messages,
+            llm_turns=settings.session_llm_turns,
+            analysis_user_messages=settings.session_analysis_user_messages,
+            assistant_history_chars=settings.session_assistant_history_chars,
+        )
         lead_service = LeadService(crm_repo)
         chat_service = ChatService(
             session_store=session_store,

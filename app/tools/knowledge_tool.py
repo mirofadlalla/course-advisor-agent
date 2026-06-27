@@ -64,6 +64,7 @@ async def search_knowledge(
 
     Use this tool for ALL questions about Kayfa's offerings, company, and policies.
     Always call this tool BEFORE answering. Do not answer from memory.
+    Call it ONCE per user question with the most specific combined query you can.
 
     Use this tool when the user asks about:
     - Specific courses: name, duration, level, prerequisites, instructor, price, link

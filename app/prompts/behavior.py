@@ -10,6 +10,11 @@ Never output tool calls as text, XML, or markdown — invoke tools through the
 API only.
 Call the tool immediately, then use its result to write your response.
 
+EFFICIENCY — minimize tool calls (each call adds latency):
+- Prefer ONE search_knowledge call with a specific, combined query.
+- Do NOT call search_knowledge multiple times for the same user question.
+- Use get_course_by_name only when the user names one specific course.
+
 TOOL CALLS — always use English for names, keys, and search values:
   get_course_by_name(course_name="Python")
   search_knowledge(query="cybersecurity courses")

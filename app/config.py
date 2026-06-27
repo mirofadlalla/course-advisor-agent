@@ -108,7 +108,23 @@ class Settings(BaseSettings):
     mongodb_collection: str = "tickets"
 
     # ─── Session memory ───────────────────────────────────────────────────────
-    session_max_messages: int = 40
+    # Total messages stored per session (user + assistant pairs × 2).
+    session_max_messages: int = 20
+    # Only the last N conversation turns sent to the LLM (reduces tokens + latency).
+    session_llm_turns: int = 3
+    # User messages kept for intent/lead analysis (not sent verbatim to LLM).
+    session_analysis_user_messages: int = 6
+    # Truncate prior assistant replies in LLM history to this many characters.
+    session_assistant_history_chars: int = 500
+
+    # ─── Agent / Groq performance ─────────────────────────────────────────────
+    # Groq SDK retries on 429 with Retry-After (often 10–60s). Default 0 = fail fast.
+    groq_max_retries: int = 0
+    groq_request_timeout_s: float = 45.0
+    # Cap tool calls and LLM round-trips per user message.
+    agent_tool_calls_limit: int = 2
+    agent_request_limit: int = 6
+    agent_tool_retries: int = 2
 
     model_config = SettingsConfigDict(
         env_file=".env",

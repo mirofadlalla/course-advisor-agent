@@ -22,6 +22,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from pydantic_ai import UsageLimits
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     FinalResultEvent,
@@ -58,6 +59,23 @@ _TOOL_STATUS_DONE: dict[str, str] = {
     "search_knowledge": "✓ Found relevant results",
     "get_course_by_name": "✓ Found matching course",
 }
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "429" in msg or "rate limit" in msg or "too many requests" in msg
+
+
+def _rate_limit_user_message(language_hint: str = "") -> str:
+    if language_hint == "ar" or any("\u0600" <= c <= "\u06ff" for c in language_hint):
+        return (
+            "⚠️ الخدمة مشغولة حالياً بسبب ضغط على الخادم. "
+            "من فضلك انتظر 10–20 ثانية وحاول مرة أخرى."
+        )
+    return (
+        "⚠️ The AI service is temporarily busy (rate limit). "
+        "Please wait 10–20 seconds and try again."
+    )
 
 
 def _is_tool_use_failed(exc: Exception) -> bool:
@@ -108,11 +126,18 @@ class ChatService:
     def _prepare_turn(
         self, question: str, session_id: str | None
     ) -> tuple[list, str, list[str], str]:
-        history = self.session_store.get_history(session_id)
-        user_history = self.session_store.get_user_messages(session_id)
+        llm_history = self.session_store.get_llm_history(session_id)
+        user_history = self.session_store.get_recent_user_messages(session_id)
         intent = detect_intent(question, user_history)
         instructions = build_intent_instructions(intent)
-        return history, instructions, user_history, intent.value
+        return llm_history, instructions, user_history, intent.value
+
+    def _usage_limits(self, deps: AgentDependencies) -> UsageLimits:
+        s = deps.settings
+        return UsageLimits(
+            tool_calls_limit=s.agent_tool_calls_limit,
+            request_limit=s.agent_request_limit,
+        )
 
     async def _finalize_turn(
         self,
@@ -200,6 +225,7 @@ class ChatService:
         queue: asyncio.Queue[Any],
         message_history: list | None = None,
         instructions: str | None = None,
+        usage_limits: UsageLimits | None = None,
     ) -> Any:
         """
         Run the agent graph with hybrid streaming.
@@ -214,6 +240,7 @@ class ChatService:
             deps=deps,
             message_history=message_history or None,
             instructions=instructions,
+            usage_limits=usage_limits,
         ) as agent_run:
             node = agent_run.next_node
 
@@ -273,6 +300,7 @@ class ChatService:
         history, instructions, user_history, intent_value = self._prepare_turn(
             question, session_id
         )
+        usage_limits = self._usage_limits(deps)
         queue: asyncio.Queue[Any] = asyncio.Queue()
 
         async def producer() -> None:
@@ -289,6 +317,7 @@ class ChatService:
                             queue,
                             message_history=history,
                             instructions=instructions,
+                            usage_limits=usage_limits,
                         )
                         phase = "generation"
                         agent_process_ms = round(
@@ -335,11 +364,12 @@ class ChatService:
             except Exception as exc:
                 agent_process_ms = round((time.perf_counter() - t0) * 1000, 2)
                 logger.error(f"ChatService.astream failed: {exc}")
-                message = (
-                    "Model generation failed."
-                    if phase == "generation"
-                    else "Knowledge search failed."
-                )
+                if _is_rate_limited(exc):
+                    message = _rate_limit_user_message(question)
+                elif phase == "generation":
+                    message = "Model generation failed."
+                else:
+                    message = "Knowledge search failed."
                 await queue.put(
                     {
                         "type": "error",
@@ -372,6 +402,7 @@ class ChatService:
         history, instructions, user_history, intent_value = self._prepare_turn(
             question, session_id
         )
+        usage_limits = self._usage_limits(deps)
         t0 = time.perf_counter()
         last_exc: Exception | None = None
 
@@ -382,6 +413,7 @@ class ChatService:
                     deps=deps,
                     message_history=history or None,
                     instructions=instructions,
+                    usage_limits=usage_limits,
                 )
                 agent_process_ms = (time.perf_counter() - t0) * 1000
                 tokens_in, tokens_out = _extract_usage(result)
@@ -431,6 +463,7 @@ class ChatService:
         history, instructions, user_history, intent_value = self._prepare_turn(
             question, session_id
         )
+        usage_limits = self._usage_limits(deps)
         t0 = time.perf_counter()
 
         try:
@@ -439,6 +472,7 @@ class ChatService:
                 deps=deps,
                 message_history=history or None,
                 instructions=instructions,
+                usage_limits=usage_limits,
             )
             agent_process_ms = (time.perf_counter() - t0) * 1000
             tokens_in, tokens_out = _extract_usage(result)

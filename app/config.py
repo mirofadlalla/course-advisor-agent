@@ -24,6 +24,11 @@ class Settings(BaseSettings):
 
     # ─── LLM ──────────────────────────────────────────────────────────────────
     groq_api_key: str
+    # llama-3.3-70b-versatile is deprecated by Groq but still fully
+    # functional until the shutdown date (2026-08-16). Reverted back to it
+    # after openai/gpt-oss-120b showed unstable tool-calling behavior
+    # (wrong-language output, failures specifically on tool-triggering
+    # questions). Re-evaluate before 2026-08-16.
     model_name: str = "groq:llama-3.3-70b-versatile"
 
     # ─── Embedding ────────────────────────────────────────────────────────────

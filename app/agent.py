@@ -53,14 +53,62 @@ SECONDARY ISSUE FIXED — BEHAVIOR PROMPT:
     have the tool results."
 """
 
+import json
+import logging
 import os
 
+import httpx
 from pydantic_ai import Agent
 
 from app.config import settings
 from app.dependencies import AgentDependencies
 from app.prompts import SYSTEM_PROMPT
 from app.tools import get_course_by_name, search_knowledge
+
+logger = logging.getLogger(__name__)
+
+
+async def _log_groq_request(request: httpx.Request) -> None:
+    """
+    DEBUG: log every raw HTTP request sent to Groq, full body included.
+    Authorization header is redacted. Uses print() (not logger) so it is
+    guaranteed to show up in container stdout regardless of any logging
+    config/filtering on the hosting platform.
+    """
+    try:
+        body = request.content.decode("utf-8", errors="replace") if request.content else ""
+    except Exception as exc:
+        body = f"<could not decode body: {exc}>"
+
+    print("\n" + "=" * 70, flush=True)
+    print(f"[GROQ REQUEST] {request.method} {request.url}", flush=True)
+    headers = {
+        k: ("***REDACTED***" if k.lower() == "authorization" else v)
+        for k, v in request.headers.items()
+    }
+    print(f"[GROQ REQUEST] headers: {headers}", flush=True)
+    print(f"[GROQ REQUEST] body:\n{body}", flush=True)
+    print("=" * 70, flush=True)
+
+
+async def _log_groq_response(response: httpx.Response) -> None:
+    """
+    DEBUG: log every raw HTTP response received from Groq, full body
+    included (status >= 400 especially). Reads the body into memory via
+    aread() — this does NOT break downstream consumption, httpx caches the
+    content after aread() so the groq client can still read it normally.
+    """
+    try:
+        await response.aread()
+        body_text = response.text
+    except Exception as exc:
+        body_text = f"<could not read body: {exc}>"
+
+    print("\n" + "-" * 70, flush=True)
+    print(f"[GROQ RESPONSE] status={response.status_code} url={response.request.url}", flush=True)
+    print(f"[GROQ RESPONSE] headers: {dict(response.headers)}", flush=True)
+    print(f"[GROQ RESPONSE] body:\n{body_text}", flush=True)
+    print("-" * 70, flush=True)
 
 
 def create_agent() -> Agent:
@@ -94,5 +142,19 @@ def create_agent() -> Agent:
     # (and tests) that reference agent._function_tools keep working.
     if not hasattr(agent, "_function_tools"):
         agent._function_tools = agent._function_toolset.tools  # type: ignore[attr-defined]
+
+    # ── DEBUG: attach raw HTTP logging directly on the Groq httpx client ──
+    # This logs the EXACT bytes sent to/received from Groq for every single
+    # request, including every retry the agent makes when calling tools.
+    # Remove once the root cause is found.
+    try:
+        httpx_client: httpx.AsyncClient = agent.model.client._client  # type: ignore[attr-defined]
+        httpx_client.event_hooks.setdefault("request", [])
+        httpx_client.event_hooks.setdefault("response", [])
+        httpx_client.event_hooks["request"].append(_log_groq_request)
+        httpx_client.event_hooks["response"].append(_log_groq_response)
+        print("[DEBUG] Groq request/response logging attached successfully.", flush=True)
+    except Exception as exc:
+        print(f"[DEBUG] Could not attach Groq HTTP logging: {exc!r}", flush=True)
 
     return agent

@@ -25,6 +25,7 @@ CHANGE FROM PREVIOUS VERSION:
     The response dict shape is extended with timing + token fields.
 """
 
+import asyncio
 import logging
 import time
 
@@ -37,6 +38,28 @@ logger = logging.getLogger(__name__)
 # Groq pricing constants (duplicated here for the return payload)
 _COST_PER_1M_IN = 0.59
 _COST_PER_1M_OUT = 0.79
+
+# Retry configuration for Groq tool_use_failed errors.
+# llama-3.3-70b occasionally emits malformed tool-call XML (missing `>`
+# after the function name), causing Groq to return HTTP 400 with
+# code="tool_use_failed".  The error is non-deterministic — a second
+# attempt with the exact same request usually succeeds.
+_MAX_TOOL_USE_RETRIES = 3
+_RETRY_BACKOFF_S = 0.5   # seconds to wait between retries
+
+
+def _is_tool_use_failed(exc: Exception) -> bool:
+    """
+    Return True when the exception is the Groq 400 tool_use_failed error.
+
+    PydanticAI wraps the raw httpx/Groq error in various ways depending on
+    version; we check the string representation which always contains the
+    error code from Groq's JSON body.
+    """
+    msg = str(exc)
+    return "tool_use_failed" in msg or (
+        "400" in msg and "Failed to call a function" in msg
+    )
 
 
 class ChatService:
@@ -82,40 +105,55 @@ class ChatService:
         t0 = time.perf_counter()
         tokens_in = 0
         tokens_out = 0
+        last_exc: Exception | None = None
 
-        try:
-            result = await self.agent.run(question, deps=deps)
-            agent_process_ms = (time.perf_counter() - t0) * 1000
-
-            logger.debug(f"ChatService.achat: messages={result.all_messages()}")
-
+        for attempt in range(1, _MAX_TOOL_USE_RETRIES + 1):
             try:
-                usage = result.usage()
-                if usage is not None:
-                    tokens_in = getattr(usage, "request_tokens", 0) or 0
-                    tokens_out = getattr(usage, "response_tokens", 0) or 0
-            except Exception as usage_err:
-                logger.debug(f"Could not extract usage: {usage_err}")
+                result = await self.agent.run(question, deps=deps)
+                agent_process_ms = (time.perf_counter() - t0) * 1000
 
-            cost_usd = (
-                (tokens_in / 1_000_000) * _COST_PER_1M_IN
-                + (tokens_out / 1_000_000) * _COST_PER_1M_OUT
-            )
+                logger.debug(f"ChatService.achat: messages={result.all_messages()}")
 
-            return {
-                "response": result.output,
-                "agent_process_ms": round(agent_process_ms, 2),
-                "tokens_in": tokens_in,
-                "tokens_out": tokens_out,
-                "cost_usd": round(cost_usd, 8),
-                "success": True,
-                "error_msg": None,
-            }
+                try:
+                    usage = result.usage()
+                    if usage is not None:
+                        tokens_in = getattr(usage, "request_tokens", 0) or 0
+                        tokens_out = getattr(usage, "response_tokens", 0) or 0
+                except Exception as usage_err:
+                    logger.debug(f"Could not extract usage: {usage_err}")
 
-        except Exception as exc:
-            agent_process_ms = (time.perf_counter() - t0) * 1000
-            logger.error(f"ChatService.achat failed: {exc}")
-            raise
+                cost_usd = (
+                    (tokens_in / 1_000_000) * _COST_PER_1M_IN
+                    + (tokens_out / 1_000_000) * _COST_PER_1M_OUT
+                )
+
+                return {
+                    "response": result.output,
+                    "agent_process_ms": round(agent_process_ms, 2),
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "cost_usd": round(cost_usd, 8),
+                    "success": True,
+                    "error_msg": None,
+                }
+
+            except Exception as exc:
+                last_exc = exc
+                if _is_tool_use_failed(exc) and attempt < _MAX_TOOL_USE_RETRIES:
+                    logger.warning(
+                        f"ChatService.achat: Groq tool_use_failed on attempt "
+                        f"{attempt}/{_MAX_TOOL_USE_RETRIES}, retrying in "
+                        f"{_RETRY_BACKOFF_S}s … ({exc!r})"
+                    )
+                    await asyncio.sleep(_RETRY_BACKOFF_S)
+                    continue
+                # Non-retryable error or final attempt — propagate.
+                agent_process_ms = (time.perf_counter() - t0) * 1000
+                logger.error(f"ChatService.achat failed (attempt {attempt}): {exc}")
+                raise
+
+        # Should be unreachable, but satisfy the type checker.
+        raise RuntimeError("achat retry loop exhausted") from last_exc
 
     def chat(self, question: str, deps: AgentDependencies) -> dict:
         """

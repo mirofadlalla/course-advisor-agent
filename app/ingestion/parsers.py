@@ -115,8 +115,10 @@ class JSONFlatParser(BaseDocumentParser):
 
     def __init__(self) -> None:
         # SimpleNodeParser: 1 Document → 1 Node (no splitting)
+        # Use a very large chunk_size to avoid splitting; chunk_size=None is
+        # not supported in newer LlamaIndex versions and raises TypeError.
         self._parser = SimpleNodeParser.from_defaults(
-            chunk_size=None,  # Do not split — let Chunker handle it
+            chunk_size=8192,  # Effectively no splitting for our records
             chunk_overlap=0,
         )
 

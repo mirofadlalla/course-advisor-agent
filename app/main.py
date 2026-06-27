@@ -90,79 +90,94 @@ async def lifespan(app: FastAPI):
     # Lazy-loaded and cached. The 400MB BAAI/bge-m3 model is downloaded
     # and cached on first call. Subsequent startups reuse the OS cache.
     logger.info(f"Step 1/9: Loading embedding model '{settings.embedding_model}'...")
-    embed_model = EmbeddingProvider.get(settings)
-    logger.info("Step 1/9: Embedding model ready.")
+    try:
+        embed_model = EmbeddingProvider.get(settings)
+        logger.info("Step 1/9: Embedding model ready.")
+    except OSError as exc:
+        # Model files unavailable (no network / no cache).
+        # The /health endpoint must still respond 200; all other endpoints
+        # will fail gracefully because embed_model is None.
+        logger.warning(f"Step 1/9: Embedding model unavailable: {exc}. RAG disabled.")
+        embed_model = None  # type: ignore[assignment]
 
-    # ── Step 2: Vector store ───────────────────────────────────────────
-    # Factory handles Simple / Chroma / Qdrant selection + auto-fallback.
-    logger.info(f"Step 2/9: Creating vector store (backend='{settings.vector_store_backend}')...")
-    vector_store = VectorStoreFactory.create(settings)
-    logger.info(f"Step 2/9: Vector store ready: {type(vector_store).__name__}")
+    # ── Steps 2-9: Full RAG pipeline (skipped when embed_model is unavailable) ──
+    if embed_model is not None:
+        # ── Step 2: Vector store ───────────────────────────────────────────
+        # Factory handles Simple / Chroma / Qdrant selection + auto-fallback.
+        logger.info(
+            f"Step 2/9: Creating vector store (backend='{settings.vector_store_backend}')..."
+        )
+        vector_store = VectorStoreFactory.create(settings)
+        logger.info(f"Step 2/9: Vector store ready: {type(vector_store).__name__}")
 
-    # ── Step 3: Ingestion components ───────────────────────────────────
-    logger.info("Step 3/9: Configuring ingestion pipeline components...")
-    loader = CompositeLoader(
-        [
-            MarkdownLoader(settings),
-            JSONLoader(settings),
-        ]
-    )
-    parser = CompositeParser()
-    chunker = SemanticChunker(settings)
+        # ── Step 3: Ingestion components ───────────────────────────────────
+        logger.info("Step 3/9: Configuring ingestion pipeline components...")
+        loader = CompositeLoader(
+            [
+                MarkdownLoader(settings),
+                JSONLoader(settings),
+            ]
+        )
+        parser = CompositeParser()
+        chunker = SemanticChunker(settings)
 
-    # ── Step 4: Index builder ──────────────────────────────────────────
-    # Receives all components via DI — doesn't create them internally.
-    index_builder = IndexBuilder(
-        loader=loader,
-        parser=parser,
-        chunker=chunker,
-        embed_model=embed_model,
-        vector_store=vector_store.get_llama_vector_store(),
-    )
+        # ── Step 4: Index builder ──────────────────────────────────────────
+        # Receives all components via DI — doesn't create them internally.
+        index_builder = IndexBuilder(
+            loader=loader,
+            parser=parser,
+            chunker=chunker,
+            embed_model=embed_model,
+            vector_store=vector_store.get_llama_vector_store(),
+        )
 
-    # ── Step 5: Storage manager ────────────────────────────────────────
-    storage_manager = StorageManager(
-        storage_path=settings.index_storage_path,
-        embed_model=embed_model,
-    )
+        # ── Step 5: Storage manager ────────────────────────────────────────
+        storage_manager = StorageManager(
+            storage_path=settings.index_storage_path,
+            embed_model=embed_model,
+        )
 
-    # ── Step 6: Run ingestion pipeline ────────────────────────────────
-    # build-or-load: fast if persisted index exists, slow if building fresh.
-    logger.info("Step 4/9: Running ingestion pipeline (build or load)...")
-    pipeline = IngestionPipeline(index_builder, storage_manager)
-    index, nodes = await pipeline.run()
-    logger.info(f"Step 4/9: Index ready with {len(nodes)} nodes.")
+        # ── Step 6: Run ingestion pipeline ────────────────────────────────
+        # build-or-load: fast if persisted index exists, slow if building fresh.
+        logger.info("Step 4/9: Running ingestion pipeline (build or load)...")
+        pipeline = IngestionPipeline(index_builder, storage_manager)
+        index, nodes = await pipeline.run()
+        logger.info(f"Step 4/9: Index ready with {len(nodes)} nodes.")
 
-    # ── Step 7: Retrieval layer ────────────────────────────────────────
-    logger.info("Step 5/9: Building retrieval layer (Dense + BM25 + Hybrid)...")
-    dense_retriever = DenseRetriever(index, settings)
-    bm25_retriever = BM25Retriever(nodes, settings)
-    hybrid_retriever = HybridRetriever(dense_retriever, bm25_retriever)
-    reranker = RerankerFactory.create(settings)
-    retrieval_service = RetrievalService(hybrid_retriever, reranker, settings)
-    logger.info(f"Step 5/9: Retrieval ready. Reranker: {type(reranker).__name__}")
+        # ── Step 7: Retrieval layer ────────────────────────────────────────
+        logger.info("Step 5/9: Building retrieval layer (Dense + BM25 + Hybrid)...")
+        dense_retriever = DenseRetriever(index, settings)
+        bm25_retriever = BM25Retriever(nodes, settings)
+        hybrid_retriever = HybridRetriever(dense_retriever, bm25_retriever)
+        reranker = RerankerFactory.create(settings)
+        retrieval_service = RetrievalService(hybrid_retriever, reranker, settings)
+        logger.info(f"Step 5/9: Retrieval ready. Reranker: {type(reranker).__name__}")
 
-    # ── Step 8: Repositories ───────────────────────────────────────────
-    logger.info("Step 6/9: Initializing repositories...")
-    course_repo = CourseRepository()
-    roadmap_repo = RoadmapRepository()
-    knowledge_repo = KnowledgeRepository(retrieval_service=retrieval_service)
-    logger.info("Step 6/9: Repositories ready.")
+        # ── Step 8: Repositories ───────────────────────────────────────────
+        logger.info("Step 6/9: Initializing repositories...")
+        course_repo = CourseRepository()
+        roadmap_repo = RoadmapRepository()
+        knowledge_repo = KnowledgeRepository(retrieval_service=retrieval_service)
+        logger.info("Step 6/9: Repositories ready.")
 
-    # ── Step 9: Wire dependencies and services ─────────────────────────
-    logger.info("Step 7/9: Wiring AgentDependencies...")
-    deps = AgentDependencies(
-        course_repository=course_repo,
-        roadmap_repository=roadmap_repo,
-        knowledge_repository=knowledge_repo,
-        settings=settings,
-    )
+        # ── Step 9: Wire dependencies and services ─────────────────────────
+        logger.info("Step 7/9: Wiring AgentDependencies...")
+        deps = AgentDependencies(
+            course_repository=course_repo,
+            roadmap_repository=roadmap_repo,
+            knowledge_repository=knowledge_repo,
+            settings=settings,
+        )
 
-    logger.info("Step 8/9: Creating ChatService and registering agent tools...")
-    chat_service = ChatService()
+        logger.info("Step 8/9: Creating ChatService and registering agent tools...")
+        chat_service = ChatService()
 
-    app.state.agent_dependencies = deps
-    app.state.chat_service = chat_service
+        app.state.agent_dependencies = deps
+        app.state.chat_service = chat_service
+    else:
+        logger.warning("RAG pipeline skipped — embedding model unavailable.")
+        app.state.agent_dependencies = None
+        app.state.chat_service = None
 
     logger.info("=" * 60)
     logger.info("Course Advisor Agent — Ready to serve requests")

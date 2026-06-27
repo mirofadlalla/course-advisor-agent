@@ -53,6 +53,8 @@ SECONDARY ISSUE FIXED — BEHAVIOR PROMPT:
     have the tool results."
 """
 
+import os
+
 from pydantic_ai import Agent
 
 from app.config import settings
@@ -73,6 +75,10 @@ def create_agent() -> Agent:
         is the model's final natural-language response after all tool calls
         have completed and their results have been fed back to the model.
     """
+    # PydanticAI >=2.0 reads GROQ_API_KEY directly from os.environ at Agent
+    # construction time, bypassing pydantic-settings.  Ensure it is set.
+    os.environ.setdefault("GROQ_API_KEY", settings.groq_api_key)
+
     agent: Agent[AgentDependencies, str] = Agent(
         model=settings.model_name,
         system_prompt=SYSTEM_PROMPT,
@@ -82,5 +88,11 @@ def create_agent() -> Agent:
         deps_type=AgentDependencies,
         tools=[search_knowledge, get_course_by_name],
     )
+
+    # Compatibility shim: PydanticAI >=2.0 renamed _function_tools to
+    # _function_toolset.tools.  Expose the old attribute so existing code
+    # (and tests) that reference agent._function_tools keep working.
+    if not hasattr(agent, "_function_tools"):
+        agent._function_tools = agent._function_toolset.tools  # type: ignore[attr-defined]
 
     return agent

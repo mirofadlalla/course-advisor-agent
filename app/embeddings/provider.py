@@ -100,9 +100,11 @@ class EmbeddingProvider:
                 trust_remote_code=False,
             )
 
-            logger.info(
-                f"EmbeddingProvider: Model loaded. Embedding dimension: {cls._instance.embed_dim}"
-            )
+            embed_dim = getattr(cls._instance, "embed_dim", None)
+            if embed_dim is not None:
+                logger.info(f"EmbeddingProvider: Model loaded. Embedding dimension: {embed_dim}")
+            else:
+                logger.info("EmbeddingProvider: Model loaded.")
 
         return cls._instance
 

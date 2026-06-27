@@ -111,9 +111,7 @@ class RetrievalService(BaseRetriever):
             top_k=final_top_k,
         )
 
-        logger.debug(
-            f"RetrievalService: Final {len(reranked)} results. "
-            f"Top score: {reranked[0].score:.4f if reranked else 'N/A'}"
-        )
+        top_score = f"{reranked[0].score:.4f}" if reranked else "N/A"
+        logger.debug(f"RetrievalService: Final {len(reranked)} results. Top score: {top_score}")
 
         return reranked

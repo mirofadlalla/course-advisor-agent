@@ -8,7 +8,6 @@ Validates that:
     running the full lifespan (no embedding model, no index)
 """
 
-from fastapi.testclient import TestClient
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -65,7 +64,7 @@ def test_import_prompts():
 
 # ── FastAPI health endpoint (no lifespan) ─────────────────────────────────────
 
-
+# @pytest.mark.skip(reason="Temporarily disabled due to FastAPI lifespan startup")
 # def test_health_endpoint():
 #     """
 #     /health must return 200 immediately — it must NOT depend on the RAG pipeline.

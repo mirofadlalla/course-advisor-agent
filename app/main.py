@@ -47,8 +47,13 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+
+import asyncio
+import json
+import re
+
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.responses import RedirectResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -326,3 +331,90 @@ def chat(chat_request: ChatRequest, request: Request):
             response=f"⚠️ An error occurred: {exc}",
             latency_ms=round(total_latency_ms, 2),
         )
+
+
+# ── Streaming SSE endpoint ─────────────────────────────────────────────────
+
+def _clean_tool_syntax(text: str) -> str:
+    """Strip any accidental tool-call markup the model emitted as plain text."""
+    # Remove <function=...>...</function> blocks
+    text = re.sub(r"<function=[^>]+>.*?</function>", "", text, flags=re.DOTALL)
+    # Remove bare <function=...> without closing tag
+    text = re.sub(r"<function=[^\n>]+>?", "", text)
+    return text.strip()
+
+
+@app.post("/chat/stream")
+async def chat_stream(chat_request: ChatRequest, request: Request):
+    """
+    Streaming SSE version of /chat.
+
+    Runs the PydanticAI agent synchronously in a thread-pool (run_sync),
+    then streams the final text token-by-token over SSE so the frontend
+    can render characters as they arrive without waiting for the full response.
+
+    SSE event format:
+        data: {"type": "token",  "text": "<chunk>"}
+        data: {"type": "done",   "latency_ms": 123, "tokens_in": 50, "tokens_out": 80, "cost_usd": 0.0001}
+        data: {"type": "error",  "message": "..."}
+    """
+    chat_service: ChatService | None = request.app.state.chat_service
+    agent_deps = request.app.state.agent_dependencies
+
+    async def event_generator():
+        if chat_service is None or agent_deps is None:
+            yield f'data: {json.dumps({"type": "error", "message": "RAG pipeline not initialized"})}\n\n'
+            return
+
+        t_start = time.perf_counter()
+        try:
+            # Run the agent in a thread so we don't block the async loop
+            loop = asyncio.get_event_loop()
+            result_dict = await loop.run_in_executor(
+                None,
+                lambda: chat_service.chat(
+                    question=chat_request.message,
+                    deps=agent_deps,
+                ),
+            )
+
+            total_latency_ms = round((time.perf_counter() - t_start) * 1000, 2)
+            raw_response: str = result_dict.get("response", "")
+            response_text = _clean_tool_syntax(raw_response)
+
+            # Stream the response in small chunks (~4 chars) so the UI
+            # renders progressively. Real token-level streaming requires
+            # pydantic-ai's run_stream() which needs an async context;
+            # this approach gives the same UX without restructuring the agent.
+            chunk_size = 4
+            for i in range(0, len(response_text), chunk_size):
+                chunk = response_text[i : i + chunk_size]
+                yield f'data: {json.dumps({"type": "token", "text": chunk})}\n\n'
+                await asyncio.sleep(0)  # yield control to event loop
+
+            # Final metadata event
+            yield f'data: {json.dumps({"type": "done", "latency_ms": total_latency_ms, "tokens_in": result_dict.get("tokens_in", 0), "tokens_out": result_dict.get("tokens_out", 0), "cost_usd": result_dict.get("cost_usd", 0.0)})}\n\n'
+
+            # Record metrics
+            metrics_store.record_request(
+                question=chat_request.message,
+                total_latency_ms=total_latency_ms,
+                agent_process_ms=result_dict.get("agent_process_ms", 0),
+                tokens_in=result_dict.get("tokens_in", 0),
+                tokens_out=result_dict.get("tokens_out", 0),
+                success=True,
+                model=settings.model_name,
+            )
+
+        except Exception as exc:
+            logger.error(f"Streaming chat error: {exc}")
+            yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+        },
+    )

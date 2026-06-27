@@ -697,50 +697,108 @@ async function sendMessage() {
   state.loading = true;
   sendBtn.disabled = true;
 
+  // ── SSE Streaming ──────────────────────────────────
+  let streamedContent = '';
+  let streamBubble = null;
+  let streamBodyEl = null;
+
+  function ensureStreamBubble() {
+    if (streamBubble) return;
+    removeTypingIndicator();
+    // Build an empty agent bubble we'll fill in as tokens arrive
+    streamBubble = document.createElement('div');
+    streamBubble.className = 'msg';
+    streamBubble.innerHTML = `
+      <div class="msg-avatar agent-avatar">🤖</div>
+      <div class="msg-content">
+        <div class="msg-header">
+          <span class="msg-author">Course Advisor</span>
+          <span class="msg-ts">${formatTime(new Date().toISOString())}</span>
+        </div>
+        <div class="msg-body stream-body"></div>
+        <div class="msg-footer stream-footer"></div>
+      </div>`;
+    messagesInner.appendChild(streamBubble);
+    streamBodyEl = streamBubble.querySelector('.stream-body');
+    scrollToBottom();
+  }
+
   try {
-    const res = await fetch('/chat', {
+    const res = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        session_id: s.id,
-      }),
+      body: JSON.stringify({ message: text, session_id: s.id }),
     });
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (evt.type === 'token') {
+          ensureStreamBubble();
+          streamedContent += evt.text;
+          // Render markdown progressively
+          streamBodyEl.innerHTML = renderMarkdown(escHtml(streamedContent));
+          scrollToBottom();
+
+        } else if (evt.type === 'done') {
+          ensureStreamBubble();
+          // Finalise the bubble with footer stats
+          const footerEl = streamBubble.querySelector('.stream-footer');
+          footerEl.innerHTML = `
+            ${evt.latency_ms ? `<span class="msg-stat">⏱ ${Math.round(evt.latency_ms)}ms</span>` : ''}
+            ${(evt.tokens_in + evt.tokens_out) ? `<span class="msg-stat">🪙 ${evt.tokens_in + evt.tokens_out} tokens</span>` : ''}
+            ${evt.cost_usd ? `<span class="msg-stat">💲 $${evt.cost_usd.toFixed(6)}</span>` : ''}
+            <button class="copy-btn" onclick="copyMsg(this)" data-text="${escAttr(streamedContent)}">⧉ Copy</button>`;
+
+          // Persist to session
+          const agentMsg = {
+            role: 'agent',
+            content: streamedContent,
+            ts: new Date().toISOString(),
+            latency: evt.latency_ms,
+            tokens: evt.tokens_in + evt.tokens_out,
+            cost: evt.cost_usd?.toFixed(6),
+          };
+          s.messages.push(agentMsg);
+          saveState();
+
+          // Status bar
+          lastStats.style.display = 'flex';
+          lastLatency.textContent = evt.latency_ms?.toFixed(0) ?? '–';
+          lastTokens.textContent = (evt.tokens_in + evt.tokens_out) || '–';
+
+        } else if (evt.type === 'error') {
+          throw new Error(evt.message);
+        }
+      }
     }
-
-    const data = await res.json();
-
-    const agentMsg = {
-      role: 'agent',
-      content: data.response,
-      ts: new Date().toISOString(),
-      latency: data.latency_ms,
-      tokens: data.tokens_in + data.tokens_out,
-      cost: data.cost_usd?.toFixed(6),
-      requestId: data.request_id,
-    };
-
-    s.messages.push(agentMsg);
-    saveState();
-
-    removeTypingIndicator();
-    messagesInner.appendChild(buildBubble(agentMsg));
-    scrollToBottom();
-
-    // Update status bar
-    lastStats.style.display = 'flex';
-    lastLatency.textContent = data.latency_ms?.toFixed(0) ?? '–';
-    lastTokens.textContent  = (data.tokens_in + data.tokens_out) || '–';
 
   } catch (err) {
     removeTypingIndicator();
     const errMsg = { role: 'agent', content: `⚠️ Error: ${err.message}`, ts: new Date().toISOString() };
     s.messages.push(errMsg);
     saveState();
-    messagesInner.appendChild(buildBubble(errMsg));
+    if (streamBubble) {
+      streamBodyEl.innerHTML = renderMarkdown(escHtml(`⚠️ Error: ${err.message}`));
+    } else {
+      messagesInner.appendChild(buildBubble(errMsg));
+    }
     scrollToBottom();
     toast('Request failed: ' + err.message, 'error');
   } finally {

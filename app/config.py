@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     mongodb_database: str = "kayfa_crm"
     mongodb_collection: str = "tickets"
 
+    # ─── Authentication (JWT) ─────────────────────────────────────────────────
+    jwt_secret_key: str = "change-me-in-production-use-long-random-string"
+    jwt_algorithm: str = "HS256"
+    jwt_access_expire_minutes: int = 60
+    jwt_refresh_expire_days: int = 7
+    # Set true in tests to skip Bearer token on /chat (local dev only).
+    auth_disabled: bool = False
+
     # ─── Session memory ───────────────────────────────────────────────────────
     # Total messages stored per session (user + assistant pairs × 2).
     session_max_messages: int = 20

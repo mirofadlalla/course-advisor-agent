@@ -50,7 +50,7 @@ from pathlib import Path
 
 import json
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -80,6 +80,21 @@ from app.vectorstores.vector_store_factory import VectorStoreFactory
 from app.monitoring.store import metrics_store
 from app.monitoring.router import router as monitoring_router
 from app.api.ingestion_router import router as ingestion_router
+from app.auth.router import router as auth_router
+from app.auth.dependencies import get_chat_user
+from app.auth.service import AuthService
+from app.admin.router import router as admin_router
+from app.admin.conversations_router import router as conversations_router
+from app.database.mongo import create_mongo_database
+from app.repositories.user_repository import create_user_repository
+from app.repositories.conversation_repository import create_conversation_repository
+from app.repositories.message_repository import create_message_repository
+from app.repositories.usage_log_repository import create_usage_log_repository
+from app.repositories.trace_repository import create_trace_repository
+from app.services.conversation_service import ConversationService
+from app.services.usage_service import UsageService
+from app.services.cancellation_manager import CancellationManager
+from app.schemas.user import TokenPayload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -182,6 +197,21 @@ async def lifespan(app: FastAPI):
             settings.mongodb_database,
             settings.mongodb_collection,
         )
+
+        mongo_db = create_mongo_database(settings.mongodb_uri, settings.mongodb_database)
+        await mongo_db.ensure_indexes()
+
+        user_repo = create_user_repository(mongo_db)
+        conversation_repo = create_conversation_repository(mongo_db)
+        message_repo = create_message_repository(mongo_db)
+        usage_log_repo = create_usage_log_repository(mongo_db)
+        trace_repo = create_trace_repository(mongo_db)
+
+        auth_service = AuthService(user_repo, settings)
+        conversation_service = ConversationService(conversation_repo, message_repo)
+        usage_service = UsageService(usage_log_repo)
+        cancellation_manager = CancellationManager()
+
         session_store = SessionStore(
             max_messages=settings.session_max_messages,
             llm_turns=settings.session_llm_turns,
@@ -192,6 +222,10 @@ async def lifespan(app: FastAPI):
         chat_service = ChatService(
             session_store=session_store,
             lead_service=lead_service,
+            conversation_service=conversation_service,
+            usage_service=usage_service,
+            trace_repository=trace_repo,
+            cancellation_manager=cancellation_manager,
         )
 
         app.state.agent_dependencies = deps
@@ -199,18 +233,51 @@ async def lifespan(app: FastAPI):
         app.state.session_store = session_store
         app.state.lead_service = lead_service
         app.state.crm_repository = crm_repo
+        app.state.mongo_db = mongo_db
+        app.state.user_repository = user_repo
+        app.state.conversation_repository = conversation_repo
+        app.state.message_repository = message_repo
+        app.state.usage_log_repository = usage_log_repo
+        app.state.trace_repository = trace_repo
+        app.state.auth_service = auth_service
+        app.state.conversation_service = conversation_service
+        app.state.usage_service = usage_service
+        app.state.cancellation_manager = cancellation_manager
         app.state.pipeline = pipeline
         app.state.storage_manager = storage_manager
         app.state.index_node_count = len(nodes)
         app.state.last_build_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     else:
         logger.warning("RAG pipeline skipped — embedding model unavailable.")
+        mongo_db = create_mongo_database(settings.mongodb_uri, settings.mongodb_database)
+        await mongo_db.ensure_indexes()
+        user_repo = create_user_repository(mongo_db)
+        conversation_repo = create_conversation_repository(mongo_db)
+        message_repo = create_message_repository(mongo_db)
+        usage_log_repo = create_usage_log_repository(mongo_db)
+        trace_repo = create_trace_repository(mongo_db)
+        crm_repo = create_crm_repository(
+            settings.mongodb_uri,
+            settings.mongodb_database,
+            settings.mongodb_collection,
+        )
         app.state.agent_dependencies = None
         app.state.chat_service = None
         app.state.pipeline = None
         app.state.storage_manager = None
         app.state.index_node_count = 0
         app.state.last_build_time = None
+        app.state.mongo_db = mongo_db
+        app.state.user_repository = user_repo
+        app.state.conversation_repository = conversation_repo
+        app.state.message_repository = message_repo
+        app.state.usage_log_repository = usage_log_repo
+        app.state.trace_repository = trace_repo
+        app.state.auth_service = AuthService(user_repo, settings)
+        app.state.conversation_service = ConversationService(
+            conversation_repo, message_repo
+        )
+        app.state.crm_repository = crm_repo
 
     logger.info("=" * 60)
     logger.info("Course Advisor Agent — Ready to serve requests")
@@ -237,6 +304,26 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 # ── Include routers ────────────────────────────────────────────────────────
 app.include_router(monitoring_router)
 app.include_router(ingestion_router)
+app.include_router(auth_router)
+app.include_router(admin_router)
+app.include_router(conversations_router)
+
+
+async def _resolve_conversation_id(
+    request: Request,
+    user: TokenPayload,
+    chat_request: ChatRequest,
+) -> str:
+    """Return conversation_id, creating one when missing."""
+    conv_id = chat_request.conversation_id or chat_request.session_id
+    conv_service: ConversationService = request.app.state.conversation_service
+    if conv_id:
+        conv = await conv_service.get_conversation(conv_id, user.sub)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return conv_id
+    conv = await conv_service.create_conversation(user.sub)
+    return conv.conversation_id
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -280,16 +367,16 @@ def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(chat_request: ChatRequest, request: Request):
-    """
-    Main chat endpoint.
-    Delegates entirely to ChatService, instruments timing, writes to MetricsStore.
-    """
+async def chat(
+    chat_request: ChatRequest,
+    request: Request,
+    user: TokenPayload = Depends(get_chat_user),
+):
+    """Main chat endpoint (requires authentication)."""
     chat_service = request.app.state.chat_service
     agent_deps = request.app.state.agent_dependencies
 
     if chat_service is None or agent_deps is None:
-        # Record the error
         metrics_store.record_request(
             question=chat_request.message,
             total_latency_ms=0,
@@ -305,12 +392,15 @@ def chat(chat_request: ChatRequest, request: Request):
             latency_ms=0,
         )
 
+    conversation_id = await _resolve_conversation_id(request, user, chat_request)
     t_start = time.perf_counter()
     try:
         result = chat_service.chat(
             question=chat_request.message,
             deps=agent_deps,
-            session_id=chat_request.session_id,
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+            user_id=user.sub,
         )
         total_latency_ms = (time.perf_counter() - t_start) * 1000
 
@@ -332,10 +422,14 @@ def chat(chat_request: ChatRequest, request: Request):
             tokens_out=result.get("tokens_out", 0),
             cost_usd=result.get("cost_usd", 0.0),
             request_id=request_id,
-            session_id=chat_request.session_id,
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+            message_id=result.get("message_id"),
+            trace_id=result.get("trace_id"),
             visitor_intent=result.get("visitor_intent"),
             ticket_id=result.get("ticket_id"),
             lead_qualified=result.get("lead_qualified", False),
+            cancelled=result.get("cancelled", False),
         )
 
     except Exception as exc:
@@ -360,21 +454,15 @@ def chat(chat_request: ChatRequest, request: Request):
 # ── Streaming SSE endpoint ─────────────────────────────────────────────────
 
 @app.post("/chat/stream")
-async def chat_stream(chat_request: ChatRequest, request: Request):
-    """
-    Streaming SSE version of /chat.
-
-    Uses hybrid agent.iter(): non-streaming Groq for tool selection (groq_compat),
-    native token streaming only for the final answer turn.
-
-    SSE event format:
-        data: {"type": "status", "text": "Searching knowledge base..."}
-        data: {"type": "token",  "text": "<delta>"}
-        data: {"type": "done",   "latency_ms": 123, "tokens_in": 50, ...}
-        data: {"type": "error",  "message": "..."}
-    """
+async def chat_stream(
+    chat_request: ChatRequest,
+    request: Request,
+    user: TokenPayload = Depends(get_chat_user),
+):
+    """Streaming SSE version of /chat (requires authentication)."""
     chat_service: ChatService | None = request.app.state.chat_service
     agent_deps = request.app.state.agent_dependencies
+    conversation_id = await _resolve_conversation_id(request, user, chat_request)
 
     async def event_generator():
         if chat_service is None or agent_deps is None:
@@ -388,11 +476,14 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
             async for event in chat_service.astream(
                 question=chat_request.message,
                 deps=agent_deps,
-                session_id=chat_request.session_id,
+                session_id=conversation_id,
+                conversation_id=conversation_id,
+                user_id=user.sub,
             ):
+                event["conversation_id"] = conversation_id
                 yield f"data: {json.dumps(event)}\n\n"
 
-                if event.get("type") == "done":
+                if event.get("type") in ("done", "cancelled"):
                     tokens_in = event.get("tokens_in", 0)
                     tokens_out = event.get("tokens_out", 0)
                     agent_process_ms = event.get("agent_process_ms", 0.0)
@@ -403,7 +494,7 @@ async def chat_stream(chat_request: ChatRequest, request: Request):
                         agent_process_ms=agent_process_ms,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
-                        success=True,
+                        success=event.get("type") == "done",
                         model=settings.model_name,
                     )
                     recorded = True

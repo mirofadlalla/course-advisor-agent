@@ -73,6 +73,12 @@ class TestSessionMemory:
 
         service = ChatService.__new__(ChatService)
         service.session_store = store
+        service.conversation_service = None
+        service.usage_service = None
+        service.trace_repository = None
+        service.cancellation_manager = __import__(
+            "app.services.cancellation_manager", fromlist=["CancellationManager"]
+        ).CancellationManager()
         service.lead_service = LeadService(
             __import__(
                 "app.repositories.crm_repository",
@@ -96,14 +102,27 @@ class TestSessionMemory:
 
     @pytest.mark.asyncio
     async def test_finalize_turn_stores_new_messages(self):
+        from app.services.chat_service import TurnContext
+
         store = SessionStore()
         service = ChatService(session_store=store)
+        turn = TurnContext(
+            user_id="u1",
+            conversation_id="",
+            message_id="m1",
+            session_key="s-new",
+        )
         meta = await service._finalize_turn(
-            session_id="s-new",
+            turn=turn,
             question="Q1",
             response="A1",
             user_history=[],
             intent_value="browsing",
+            instructions="",
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+            model_key="groq:llama-3.3-70b-versatile",
         )
         assert meta["visitor_intent"] == "browsing"
         assert store.get_user_messages("s-new") == ["Q1"]

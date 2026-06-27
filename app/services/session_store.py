@@ -102,3 +102,25 @@ class SessionStore:
     def clear(self, session_id: str) -> None:
         with self._lock:
             self._sessions.pop(session_id, None)
+
+    def load_messages(
+        self, session_id: str, messages: list
+    ) -> None:
+        """Hydrate in-memory history from persisted messages."""
+        from app.schemas.message import MessageRole
+
+        with self._lock:
+            history: list[ModelMessage] = []
+            for msg in messages:
+                role = msg.role if hasattr(msg, "role") else msg.get("role")
+                content = msg.content if hasattr(msg, "content") else msg.get("content", "")
+                if role == MessageRole.USER or role == "user":
+                    history.append(
+                        ModelRequest(parts=[UserPromptPart(content=content)])
+                    )
+                elif role == MessageRole.ASSISTANT or role == "assistant":
+                    history.append(
+                        ModelResponse(parts=[TextPart(content=content)])
+                    )
+            if history:
+                self._sessions[session_id] = history[-self._max_messages :]

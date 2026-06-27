@@ -22,7 +22,8 @@ from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None  # legacy alias for conversation_id
+    conversation_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -34,6 +35,10 @@ class ChatResponse(BaseModel):
     cost_usd: float = 0.0
     request_id: str = ""
     session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    message_id: Optional[str] = None
+    trace_id: Optional[str] = None
     visitor_intent: Optional[str] = None
     ticket_id: Optional[str] = None
     lead_qualified: bool = False
+    cancelled: bool = False
